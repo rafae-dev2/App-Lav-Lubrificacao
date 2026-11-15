@@ -1,0 +1,103 @@
+/* Painel visível de relatórios em imagem (Controle de Equipamentos — Apoio). */
+.apoio-image-reports {
+  margin: 14px 0 18px;
+}
+.apoio-image-reports > summary {
+  cursor: pointer;
+}
+.apoio-image-reports .apoio-image-reports-body {
+  padding-top: 6px;
+}
+/* O corpo dos filtros de Acompanhamento é uma grade de quatro colunas; o
+   painel de imagens ocupa a largura toda e organiza os cartões por conta. */
+.apoio-image-reports .mt-filter-body.apoio-image-reports-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  min-width: 0;
+}
+.apoio-image-reports .mt-filter-body.apoio-image-reports-body > * {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Seleção individual dos equipamentos que entram no PNG. */
+.apoio-image-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.apoio-image-picker-action {
+  border: 1px solid var(--border-primary);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.apoio-image-picker-action:hover:not(:disabled) {
+  border-color: var(--brand-green);
+}
+.apoio-image-picker-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.apoio-image-reports .apoio-image-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+}
+.apoio-image-reports .apoio-image-preview-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.apoio-image-reports .apoio-image-preview-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  flex-shrink: 0;
+  accent-color: var(--brand-green, #1f6b45);
+}
+.apoio-image-reports .apoio-image-preview-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+.apoio-image-reports .apoio-image-preview-text strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.apoio-image-reports .apoio-image-preview-text span {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.apoio-image-reports .apoio-image-preview-text small {
+  flex: 1 0 100%;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.apoio-image-reports .apoio-image-preview-row.is-unmarked {
+  opacity: 0.55;
+  border-style: dashed;
+  background: transparent;
+}
