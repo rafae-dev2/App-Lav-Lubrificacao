@@ -16,6 +16,12 @@ import { format, parseISO, isValid, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useTheme } from '../contexts/ThemeContext';
 import AlertasEquipamentos from '../components/AlertasEquipamentos';
+import {
+  VerdanCountUp,
+  VerdanPillBarChart,
+  VerdanRadialGauge,
+  VerdanSegmentedProgress,
+} from '../components/VerdanAnimatedWidgets';
 
 interface Props {
   schedules: Programacao[];
@@ -58,7 +64,8 @@ function renderCustomPieLabel({
 }
 
 export default function Dashboard({ schedules, allSchedules, stats, loading, error }: Props) {
-  const { isDark } = useTheme();
+  const { isDark, theme } = useTheme();
+  const isVerdan = theme === 'verdan';
   const dashRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -130,13 +137,19 @@ export default function Dashboard({ schedules, allSchedules, stats, loading, err
 
   // ─── Paleta de cores dinâmica ────────────────────────────────────────────────
   const C = {
-    atrasado:   isDark ? '#fc8181' : '#ef4444',
-    pendente:   isDark ? '#fbbf24' : '#f59e0b',
-    programado: isDark ? '#4fd1c5' : '#3b82f6',
-    encerrado:  isDark ? '#38b2ac' : '#22c55e',
-    grid:       isDark ? 'rgba(255,255,255,0.06)' : '#f0f0f0',
-    axis:       isDark ? '#9a9a9a' : '#9ca3af',
-    tooltip:    { background: isDark ? '#253347' : '#ffffff', border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : '#e5e7eb'}`, borderRadius: 10, color: isDark ? '#e2e8f0' : '#111827', fontSize: 12 },
+    atrasado:   isVerdan ? '#f87171' : isDark ? '#fc8181' : '#ef4444',
+    pendente:   isVerdan ? '#fbbf24' : isDark ? '#fbbf24' : '#f59e0b',
+    programado: isVerdan ? '#38bdf8' : isDark ? '#4fd1c5' : '#3b82f6',
+    encerrado:  isVerdan ? '#b7ed40' : isDark ? '#38b2ac' : '#22c55e',
+    grid:       isDark ? 'rgba(208, 236, 182, 0.08)' : '#f0f0f0',
+    axis:       isVerdan ? '#8ea594' : isDark ? '#9a9a9a' : '#9ca3af',
+    tooltip:    {
+      background: isVerdan ? 'rgba(10, 21, 14, 0.94)' : isDark ? '#253347' : '#ffffff',
+      border: `1px solid ${isVerdan ? 'rgba(183, 237, 64, 0.35)' : isDark ? 'rgba(255,255,255,0.08)' : '#e5e7eb'}`,
+      borderRadius: 12,
+      color: isDark ? '#eef6ec' : '#111827',
+      fontSize: 12,
+    },
     card:       isDark ? 'glass-card' : 'bg-white rounded-xl border border-gray-200 shadow-md hover:shadow-lg transition-shadow duration-200',
     cardTitle:  isDark ? 'text-[var(--text-primary)]' : 'text-gray-700',
   };
@@ -359,7 +372,9 @@ export default function Dashboard({ schedules, allSchedules, stats, loading, err
               <div className="flex items-start justify-between">
                 <div>
                   <p className={`text-xs font-medium ${isDark ? 'text-[var(--text-muted)]' : 'opacity-70'}`}>{sc.label}</p>
-                  <p className={`text-2xl font-black mt-1 ${isDark ? 'text-[var(--text-primary)]' : ''}`}>{sc.value}</p>
+                  <p className={`text-2xl font-black mt-1 ${isDark ? 'text-[var(--text-primary)]' : ''}`}>
+                    {isVerdan && typeof sc.value === 'number' ? <VerdanCountUp value={sc.value} /> : sc.value}
+                  </p>
                 </div>
                 <div className={`p-2 rounded-lg ${isDark ? 'bg-white/5' : 'bg-white/60'}`}>
                   <Icon size={18} className={isDark ? sc.iconDark : ''} />
@@ -421,22 +436,37 @@ export default function Dashboard({ schedules, allSchedules, stats, loading, err
 
         {/* Barras mensais */}
         <div className={`dashboard-panel ${C.card} p-5`}>
-          <div className="flex items-center gap-2 mb-4">
-            <BarChart2 size={15} className={isDark ? 'text-[var(--brand-green)]' : 'text-green-600'} />
-            <h3 className={`text-sm font-semibold ${C.cardTitle}`}>Programações por Mês</h3>
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <div className="flex items-center gap-2">
+              <BarChart2 size={15} className={isDark ? 'text-[var(--brand-green)]' : 'text-green-600'} />
+              <h3 className={`text-sm font-semibold ${C.cardTitle}`}>Programações por Mês</h3>
+            </div>
+            {isVerdan && (
+              <span className="verdan-chip verdan-chip--lime">Últimos 6 meses</span>
+            )}
           </div>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={monthlyData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.grid} vertical={false} />
-              <XAxis dataKey="mes" tick={{ fontSize: 11, fill: C.axis }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: C.axis }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={C.tooltip} cursor={{ fill: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)' }} />
-              <Legend formatter={(v) => <span style={{ color: C.axis, fontSize: 11 }}>{v}</span>} />
-              <Bar dataKey="programado" name="Programado" fill={C.programado} radius={[4,4,0,0]} maxBarSize={28} />
-              <Bar dataKey="atrasado"   name="Atrasado"   fill={C.atrasado}   radius={[4,4,0,0]} maxBarSize={28} />
-              <Bar dataKey="encerrado"  name="Encerrado"  fill={C.encerrado}  radius={[4,4,0,0]} maxBarSize={28} />
-            </BarChart>
-          </ResponsiveContainer>
+          {isVerdan ? (
+            <VerdanPillBarChart
+              data={monthlyData.map((m) => ({
+                label: m.mes.split('/')[0] ?? m.mes,
+                value: m.programado + m.atrasado + m.encerrado,
+              }))}
+              unit="ord."
+            />
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={monthlyData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.grid} vertical={false} />
+                <XAxis dataKey="mes" tick={{ fontSize: 11, fill: C.axis }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: C.axis }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={C.tooltip} cursor={{ fill: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)' }} />
+                <Legend formatter={(v) => <span style={{ color: C.axis, fontSize: 11 }}>{v}</span>} />
+                <Bar dataKey="programado" name="Programado" fill={C.programado} radius={[4,4,0,0]} maxBarSize={28} />
+                <Bar dataKey="atrasado"   name="Atrasado"   fill={C.atrasado}   radius={[4,4,0,0]} maxBarSize={28} />
+                <Bar dataKey="encerrado"  name="Encerrado"  fill={C.encerrado}  radius={[4,4,0,0]} maxBarSize={28} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
@@ -474,26 +504,40 @@ export default function Dashboard({ schedules, allSchedules, stats, loading, err
 
         {/* Radial — taxa de conclusão */}
         <div className={`dashboard-panel ${C.card} p-5 flex flex-col items-center justify-center`}>
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-2 mb-3 w-full">
             <Zap size={15} className={isDark ? 'text-[var(--brand-yellow)]' : 'text-amber-500'} />
             <h3 className={`text-sm font-semibold ${C.cardTitle}`}>Taxa de Conclusão</h3>
           </div>
-          <ResponsiveContainer width="100%" height={160}>
-            <RadialBarChart
-              cx="50%" cy="50%"
-              innerRadius="55%"
-              outerRadius="85%"
-              startAngle={225}
-              endAngle={-45}
-              data={[{ value: 100, fill: isDark ? 'rgba(255,255,255,0.05)' : '#f3f4f6' }, ...radialData]}
-            >
-              <RadialBar dataKey="value" cornerRadius={8} background={false} />
-            </RadialBarChart>
-          </ResponsiveContainer>
-          <div className="text-center -mt-4">
-            <p className={`text-4xl font-black ${isDark ? 'text-[var(--brand-green-light)]' : 'text-green-600'}`}>{taxaConclusao}%</p>
-            <p className={`text-xs mt-1 ${isDark ? 'text-[var(--text-muted)]' : 'text-gray-500'}`}>{stats.encerrado} de {stats.total} concluídos</p>
-          </div>
+          {isVerdan ? (
+            <div className="w-full space-y-4">
+              <VerdanRadialGauge
+                valuePct={taxaConclusao}
+                label="CONCLUÍDO"
+                subtitle={`${stats.encerrado} de ${stats.total} concluídos`}
+                size={196}
+              />
+              <VerdanSegmentedProgress pct={taxaConclusao} blocks={5} />
+            </div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={160}>
+                <RadialBarChart
+                  cx="50%" cy="50%"
+                  innerRadius="55%"
+                  outerRadius="85%"
+                  startAngle={225}
+                  endAngle={-45}
+                  data={[{ value: 100, fill: isDark ? 'rgba(255,255,255,0.05)' : '#f3f4f6' }, ...radialData]}
+                >
+                  <RadialBar dataKey="value" cornerRadius={8} background={false} />
+                </RadialBarChart>
+              </ResponsiveContainer>
+              <div className="text-center -mt-4">
+                <p className={`text-4xl font-black ${isDark ? 'text-[var(--brand-green-light)]' : 'text-green-600'}`}>{taxaConclusao}%</p>
+                <p className={`text-xs mt-1 ${isDark ? 'text-[var(--text-muted)]' : 'text-gray-500'}`}>{stats.encerrado} de {stats.total} concluídos</p>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

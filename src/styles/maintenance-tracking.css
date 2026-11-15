@@ -109,13 +109,14 @@
 
 .mt-hero-brand img {
   flex: 0 0 auto;
-  width: 68px;
-  height: 68px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
-  border: 2px solid var(--mt-gold-light);
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.2);
+  padding: 2px;
+  border: 1.5px solid rgba(240, 223, 147, 0.58);
+  border-radius: 9999px;
+  background: radial-gradient(circle at 35% 30%, rgba(28, 74, 44, 0.88), rgba(7, 20, 11, 0.94));
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
 .mt-eyebrow,
@@ -1389,9 +1390,9 @@
   }
 
   .mt-hero-brand img {
-    width: 54px;
-    height: 54px;
-    border-radius: 13px;
+    width: 52px;
+    height: 52px;
+    border-radius: 9999px;
   }
 
   .mt-hero-actions {

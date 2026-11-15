@@ -486,13 +486,13 @@ export default function Layout({
                       className="fixed inset-0 z-[9998]"
                       onClick={() => setShowThemePicker(false)}
                     />
-                    <div className="shell-theme-picker fixed right-4 top-16 z-[9999] rounded-2xl shadow-2xl w-64 overflow-hidden">
+                    <div className="shell-theme-picker fixed right-3 sm:right-4 top-16 z-[9999] rounded-2xl shadow-2xl w-80 max-w-[calc(100vw-24px)] overflow-hidden">
                       <div className="shell-theme-picker__heading px-4 py-3">
                         <p className="text-xs font-bold uppercase tracking-wider">
                           Escolher Tema
                         </p>
                       </div>
-                      <div className="p-2 space-y-1 max-h-[360px] overflow-y-auto">
+                      <div className="p-2 space-y-1 max-h-[380px] overflow-y-auto">
                         {THEMES.map((t) => (
                           <button
                             key={t.key}
@@ -523,10 +523,22 @@ export default function Layout({
                             <div className="flex-1 min-w-0">
                               <div className="shell-theme-option__label text-sm font-semibold flex items-center gap-1.5">
                                 <span>{t.emoji}</span>
-                                <span>{t.label}</span>
+                                <span className="truncate">{t.label}</span>
+                                {t.key === "verdan" && (
+                                  <span
+                                    className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md shrink-0"
+                                    style={{
+                                      background: `${t.accentColor}22`,
+                                      color: t.accentColor,
+                                      border: `1px solid ${t.accentColor}44`,
+                                    }}
+                                  >
+                                    Principal
+                                  </span>
+                                )}
                                 {theme === t.key && (
                                   <span
-                                    className="ml-auto text-xs"
+                                    className="ml-auto text-xs shrink-0"
                                     style={{ color: t.accentColor }}
                                   >
                                     ✓
@@ -577,7 +589,7 @@ export default function Layout({
           className={
             currentPage === "gestao-ordens-manutencao"
               ? "flex-1 min-h-0 flex flex-col overflow-hidden"
-              : "flex-1 overflow-y-auto p-4 lg:p-6"
+              : "flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"
           }
           style={{ backgroundColor: "transparent" }}
         >

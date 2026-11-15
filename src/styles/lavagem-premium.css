@@ -137,15 +137,15 @@ html.theme-glassy-v18 .app-shell .lavagem-premium > .lavagem-premium-hero {
 }
 
 .lavagem-premium .lavagem-premium-brand img {
-  width: 64px !important;
-  height: 64px !important;
-  flex: 0 0 64px;
+  width: 60px !important;
+  height: 60px !important;
+  flex: 0 0 60px;
   object-fit: contain;
-  border: 2px solid var(--lavagem-gold-light) !important;
-  border-radius: 15px !important;
-  background: #ffffff !important;
-  padding: 3px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
+  border: 1.5px solid rgba(240, 223, 147, 0.62) !important;
+  border-radius: 9999px !important;
+  background: radial-gradient(circle at 35% 30%, rgba(28, 74, 44, 0.88), rgba(7, 20, 11, 0.94)) !important;
+  padding: 2px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .14);
 }
 
 .lavagem-premium .lavagem-premium-brand > div {

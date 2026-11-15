@@ -26,7 +26,7 @@ html.dark .lub-module {
 .lub-module button:disabled { cursor: not-allowed; }
 .lub-hero { border-radius: 18px; background: linear-gradient(115deg, #1f6b45, #13472e); color: #fff; padding: 24px; display: flex; align-items: center; justify-content: space-between; gap: 20px; box-shadow: 0 8px 24px rgba(20,72,47,.12); }
 .lub-brand { display: flex; align-items: center; gap: 15px; min-width: 0; }
-.lub-brand img { width: 58px; height: 58px; object-fit: contain; border-radius: 13px; background: #fff; padding: 4px; flex-shrink: 0; }
+.lub-brand img { width: 56px; height: 56px; object-fit: contain; border-radius: 9999px; background: radial-gradient(circle at 35% 30%, rgba(28, 74, 44, 0.86), rgba(7, 20, 11, 0.94)); border: 1.5px solid rgba(240, 223, 147, 0.56); padding: 2px; flex-shrink: 0; box-shadow: 0 6px 16px rgba(0, 0, 0, .24); }
 .lub-eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .15em; color: #c6e2d1; font-weight: 600; }
 .lub-hero h2 { font-size: clamp(20px,2vw,28px); font-weight: 700; line-height: 1.25; margin-top: 4px; }
 .lub-hero p:not(.lub-eyebrow) { font-size: 12px; line-height: 1.6; color: #d8ebdf; margin-top: 6px; }
@@ -49,6 +49,9 @@ html.dark .lub-module {
 .lub-filter-panel input, .lub-filter-panel select { background: var(--lub-soft); border-color: var(--lub-line); color: var(--lub-text); min-height: 40px; }
 .lub-filter-panel .min-w-\[200px\] { min-width: 180px; }
 .lub-table-panel { background: var(--lub-surface) !important; border: 1px solid var(--lub-line) !important; box-shadow: 0 4px 16px rgba(20,72,47,.04); border-radius: 14px; }
+.lavagem-premium:has(.lub-fullscreen) { z-index: 55 !important; }
+.lub-module.lub-fullscreen { position: fixed !important; inset: 0 !important; z-index: 55 !important; width: 100% !important; height: 100dvh !important; max-height: 100dvh !important; overflow-x: hidden !important; overflow-y: auto !important; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.lub-module.lub-fullscreen .lub-table-panel { flex: none !important; overflow-x: hidden !important; overflow-y: visible !important; }
 .lub-table-caption { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 17px 20px; border-bottom: 1px solid var(--lub-line); }
 .lub-table-caption strong { font-size: 14px; color: var(--lub-green); }
 .lub-table-caption span { font-size: 11px; color: var(--lub-muted); }
@@ -104,6 +107,8 @@ html.dark .lub-module {
   .lub-brand img { width: 46px; height: 46px; }
   .lub-hero-total { border-left: 0; border-top: 1px solid rgba(255,255,255,.2); padding: 10px 0 0; width: 100%; display: flex; gap: 10px; align-items: center; }
   .lub-hero-total strong { font-size: 24px; }
+  .lub-toolbar > div:last-child { width: 100%; }
+  .lub-toolbar button { min-height: 40px; }
   .lub-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
   .lub-kpi { padding: 12px; }
   .lub-kpi strong { font-size: 25px; }

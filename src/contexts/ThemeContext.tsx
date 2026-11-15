@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-export type Theme = 'light' | 'dark' | 'ocean' | 'sunset' | 'forest' | 'midnight' | 'rose' | 'arctic' | 'copper' | 'lavender' | 'glass' | 'glassy-v18';
+export type Theme = 'verdan' | 'light' | 'dark' | 'ocean' | 'sunset' | 'forest' | 'midnight' | 'rose' | 'arctic' | 'copper' | 'lavender' | 'glass' | 'glassy-v18';
 
 export interface ThemeInfo {
   key: Theme;
@@ -13,6 +13,7 @@ export interface ThemeInfo {
 }
 
 export const THEMES: ThemeInfo[] = [
+  { key: 'verdan',   label: 'Verdan Farm OS', emoji: '🌿', description: 'Vidro escuro botânico com lima e animações fluidas', accentColor: '#b7ed40', previewBg: 'linear-gradient(135deg,#06100a 0%,#0f2918 55%,#1a4224 100%)', previewAccent: '#b7ed40' },
   { key: 'light',    label: 'Claro',     emoji: '☀️',  description: 'Tema claro corporativo',     accentColor: '#1F6B45', previewBg: '#F5F9F6', previewAccent: '#1F6B45' },
   { key: 'dark',     label: 'Dark',      emoji: '🌙',  description: 'Modo escuro ultra moderno',   accentColor: '#00ff88', previewBg: '#1a2332', previewAccent: '#00ff88' },
   { key: 'ocean',    label: 'Ocean',     emoji: '🌊',  description: 'Azul oceano profundo',        accentColor: '#22d3ee', previewBg: '#0c1a2e', previewAccent: '#22d3ee' },
@@ -35,20 +36,20 @@ interface ThemeContextType {
   themeInfo: ThemeInfo;
 }
 
-const DEFAULT_THEME: Theme = 'light';
+const DEFAULT_THEME: Theme = 'verdan';
 const THEME_STORAGE_KEY = 'bp-theme';
 const THEME_DEFAULT_VERSION_KEY = 'bp-theme-default-version';
-const THEME_DEFAULT_VERSION = 'light-v10.6';
+const THEME_DEFAULT_VERSION = 'verdan-v10.29';
 
 const ThemeContext = createContext<ThemeContextType>({
   theme: DEFAULT_THEME,
   setTheme: () => {},
   toggleTheme: () => {},
-  isDark: false,
+  isDark: true,
   themeInfo: THEMES[0],
 });
 
-const DARK_THEMES: Theme[] = ['dark', 'ocean', 'sunset', 'forest', 'midnight', 'copper', 'glassy-v18'];
+const DARK_THEMES: Theme[] = ['verdan', 'dark', 'ocean', 'sunset', 'forest', 'midnight', 'copper', 'glassy-v18'];
 const LIGHT_THEMES: Theme[] = ['light', 'rose', 'arctic', 'lavender', 'glass'];
 
 const THEME_KEYS = new Set<Theme>(THEMES.map(t => t.key));
@@ -104,7 +105,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     if (typeof document !== 'undefined') {
       const root = document.documentElement;
       // Remover todas as classes de tema sem tocar em classes estruturais da aplicação.
-      root.classList.remove('dark', 'theme-ocean', 'theme-sunset', 'theme-forest', 'theme-midnight', 'theme-rose', 'theme-arctic', 'theme-copper', 'theme-lavender', 'theme-glass', 'theme-glassy-v18');
+      root.classList.remove('dark', 'theme-verdan', 'theme-ocean', 'theme-sunset', 'theme-forest', 'theme-midnight', 'theme-rose', 'theme-arctic', 'theme-copper', 'theme-lavender', 'theme-glass', 'theme-glassy-v18');
 
       if (DARK_THEMES.includes(appliedTheme)) root.classList.add('dark');
       if (appliedTheme !== 'light' && appliedTheme !== 'dark') root.classList.add(`theme-${appliedTheme}`);

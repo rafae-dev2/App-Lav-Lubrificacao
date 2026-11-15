@@ -73,7 +73,7 @@ export default function Calendario({ schedules }: Props) {
   const text       = isDark ? 'text-[var(--text-primary)]' : 'text-gray-900';
   const textMuted  = isDark ? 'text-[var(--text-muted)]' : 'text-gray-500';
   const textSm     = isDark ? 'text-[var(--text-secondary)]' : 'text-gray-700';
-  const card       = isDark ? 'bg-[var(--bg-secondary)] border border-white/10' : 'bg-white border border-gray-200';
+  const card       = isDark ? 'glass-card' : 'bg-white border border-gray-200';
   const divider    = isDark ? 'border-white/10' : 'border-gray-100';
   const headerBg   = isDark ? 'bg-[var(--bg-tertiary)]' : 'bg-gray-50';
   const navBtn     = isDark
@@ -105,22 +105,22 @@ export default function Calendario({ schedules }: Props) {
         </div>
         {/* Resumo do mês */}
         {monthStats.total > 0 && (
-          <div className="flex items-center gap-2 text-xs">
-            <span className={`px-2 py-1 rounded-lg font-semibold ${isDark ? 'bg-white/5 text-white' : 'bg-gray-100 text-gray-700'}`}>
+          <div className="flex flex-wrap items-center gap-2 text-xs tabular-nums">
+            <span className={`px-2.5 py-1 rounded-lg font-semibold border ${isDark ? 'bg-white/5 border-white/10 text-[var(--text-primary)]' : 'bg-gray-100 border-gray-200 text-gray-700'}`}>
               {monthStats.total} total
             </span>
             {monthStats.enc > 0 && (
-              <span className="px-2 py-1 rounded-lg font-semibold bg-green-100 text-green-700">
+              <span className={`px-2.5 py-1 rounded-lg font-semibold border ${isDark ? 'bg-emerald-500/15 border-emerald-400/35 text-emerald-200' : 'bg-green-100 border-green-200 text-green-700'}`}>
                 {monthStats.enc} encerradas
               </span>
             )}
             {monthStats.atr > 0 && (
-              <span className="px-2 py-1 rounded-lg font-semibold bg-red-100 text-red-700 animate-pulse">
+              <span className={`px-2.5 py-1 rounded-lg font-semibold border animate-pulse ${isDark ? 'bg-red-500/15 border-red-400/40 text-red-200' : 'bg-red-100 border-red-200 text-red-700'}`}>
                 {monthStats.atr} atrasadas
               </span>
             )}
             {monthStats.and > 0 && (
-              <span className="px-2 py-1 rounded-lg font-semibold bg-purple-100 text-purple-700">
+              <span className={`px-2.5 py-1 rounded-lg font-semibold border ${isDark ? 'bg-purple-500/15 border-purple-400/35 text-purple-200' : 'bg-purple-100 border-purple-200 text-purple-700'}`}>
                 {monthStats.and} andamento
               </span>
             )}
@@ -204,12 +204,14 @@ export default function Calendario({ schedules }: Props) {
               >
                 {/* Número do dia */}
                 <div className={`
-                  text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full mb-1
+                  text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full mb-1 tabular-nums
                   ${isToday
-                    ? 'bg-green-600 text-white'
+                    ? isDark
+                      ? 'bg-[var(--brand-green)] text-[var(--text-inverse)] font-bold'
+                      : 'bg-green-600 text-white'
                     : isCurrentMonth
                       ? isDark ? 'text-[var(--text-primary)]' : 'text-gray-700'
-                      : isDark ? 'text-white/20' : 'text-gray-300'
+                      : isDark ? 'text-white/25' : 'text-gray-300'
                   }
                 `}>
                   {format(day, 'd')}

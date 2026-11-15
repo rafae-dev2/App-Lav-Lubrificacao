@@ -9,6 +9,7 @@ import './styles/apoio-premium.css';
 import './styles/apoio-reference.css';
 import './styles/apoio-devices.css';
 import './styles/lavagem-premium.css';
+import './styles/verdan-os.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

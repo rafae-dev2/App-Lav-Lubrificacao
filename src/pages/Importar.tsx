@@ -172,7 +172,7 @@ export default function Importar({ onImport }: Props) {
 
   // ── CSS helpers ──────────────────────────────────────────────────────────────
   const card = isDark
-    ? 'bg-[var(--bg-secondary)] border border-white/10 rounded-xl shadow-lg'
+    ? 'glass-card rounded-xl shadow-lg'
     : 'bg-white border border-gray-200 rounded-xl shadow-sm';
 
   const text = isDark ? 'text-[var(--text-primary)]' : 'text-gray-900';
@@ -196,7 +196,9 @@ export default function Importar({ onImport }: Props) {
           <React.Fragment key={s}>
             <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition-colors ${
               step === s
-                ? 'bg-green-600 text-white'
+                ? isDark
+                  ? 'bg-[var(--brand-green)] text-[var(--text-inverse)] font-bold'
+                  : 'bg-green-600 text-white'
                 : step === 'done' && i < 2
                   ? isDark ? 'bg-green-900/40 text-green-400' : 'bg-green-100 text-green-700'
                   : isDark ? 'bg-white/10 text-[var(--text-muted)]' : 'bg-gray-100 text-gray-500'

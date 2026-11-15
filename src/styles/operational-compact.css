@@ -28,9 +28,9 @@
 }
 
 .maintenance-tracking .mt-hero-brand img {
-  width: 58px;
-  height: 58px;
-  border-radius: 13px;
+  width: 56px;
+  height: 56px;
+  border-radius: 9999px;
 }
 
 .maintenance-tracking .mt-hero h2 {
@@ -435,7 +435,7 @@
   width: 54px !important;
   height: 54px !important;
   flex-basis: 54px;
-  border-radius: 12px !important;
+  border-radius: 9999px !important;
 }
 
 .lavagem-premium .lavagem-premium-brand h2 {
@@ -475,7 +475,7 @@
 .lavagem-premium .lub-module .lub-brand img {
   width: 46px;
   height: 46px;
-  border-radius: 10px;
+  border-radius: 9999px;
 }
 
 .lavagem-premium .lub-module .lub-hero h2 {

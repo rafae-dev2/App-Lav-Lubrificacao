@@ -82,6 +82,7 @@ function createSupabaseMock() {
         if (state.fromError) return { data: null, error: state.fromError };
         return { data: { id: state.nextId++ }, error: null };
       },
+      abortSignal() { return this; },
       then(resolve, reject) {
         return Promise.resolve(resultFor(this)).then(resolve, reject);
       },
@@ -90,9 +91,16 @@ function createSupabaseMock() {
   }
 
   const supabase = {
-    rpc: async (name, args) => {
+    rpc: (name, args) => {
       state.rpcCalls.push({ name, args });
-      return state.rpcHandler ? state.rpcHandler(name, args) : state.rpcResponse;
+      const query = {
+        abortSignal() { return query; },
+        then(resolve, reject) {
+          const res = state.rpcHandler ? state.rpcHandler(name, args) : state.rpcResponse;
+          return Promise.resolve(res).then(resolve, reject);
+        },
+      };
+      return query;
     },
     from(table) {
       state.fromCalls.push(table);
@@ -370,6 +378,28 @@ async function main() {
   assert.equal(schedules[3].dataRealizada, '2026-11-03');
   assert.equal(schedules[3].dataRealizadaOrigem, 'MANUAL');
   assert.equal(schedules[0].pcmEditadoEm, undefined);
+
+  // AbortError (ex.: StrictMode unmount ou cancelamento de leitura) não deve poluir console.error.
+  const loggedErrors = [];
+  const origConsoleError = console.error;
+  console.error = (...args) => loggedErrors.push(args.join(' '));
+  try {
+    mock.state.rpcHandler = (name) => name === 'carregar_lavagem_programacoes'
+      ? { data: null, error: { code: '20', message: 'AbortError: signal is aborted without reason' } }
+      : { data: [], error: null };
+    const abortController = new AbortController();
+    await assert.rejects(
+      () => service.fetchSchedules({ fresh: true, signal: abortController.signal }),
+      (err) => err && err.name === 'AbortError',
+    );
+    assert.equal(
+      loggedErrors.some((line) => line.includes('Erro no RPC de programações')),
+      false,
+      'AbortError não deve registrar console.error de falha no RPC',
+    );
+  } finally {
+    console.error = origConsoleError;
+  }
 
   const pcm = {
     ...schedules[0],

@@ -43,7 +43,7 @@
 }
 .tv-topbar { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
 .tv-brand { display: flex; gap: 14px; align-items: center; min-width: 0; }
-.tv-brand img { width: 48px; height: 48px; object-fit: contain; border-radius: 50%; flex-shrink: 0; }
+.tv-brand img { width: 50px; height: 50px; object-fit: contain; border-radius: 9999px; padding: 2px; background: radial-gradient(circle at 35% 30%, rgba(30, 74, 48, 0.7), rgba(11, 23, 28, 0.9)); border: 1.5px solid rgba(131, 220, 192, 0.42); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); flex-shrink: 0; }
 .tv-eyebrow { color: var(--tv-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .16em; font-weight: 700; }
 .tv-topbar h2 { font-family: 'Inter','Segoe UI',sans-serif !important; font-size: clamp(22px,1.8vw,34px); line-height: 1.2; font-weight: 650; letter-spacing: -.035em; color: var(--tv-text); margin: 5px 0; }
 .tv-title-dot { display: inline-block; width: 7px; height: 7px; margin-left: 10px; border-radius: 50%; background: var(--tv-red); vertical-align: middle; }

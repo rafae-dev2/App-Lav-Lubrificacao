@@ -253,6 +253,7 @@ export function useSchedules() {
     const controller=new AbortController();
     activeReadRef.current=controller;
     let timeout:ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
     // Momento em que ESTE sync começou. Se uma alteração local foi confirmada
     // depois disso, este fetch pode ter dados antigos e não deve sobrescrevê-la.
     const syncStartTs = Date.now();
@@ -262,7 +263,13 @@ export function useSchedules() {
     try {
       const data = await Promise.race([
         fetchSchedules({fresh,signal:controller.signal}),
-        new Promise<never>((_,reject)=>{timeout=setTimeout(()=>{controller.abort();reject(new Error('A consulta de Lavagem e Lubrificação excedeu 20 segundos. Tentando novamente.'));},20_000);}),
+        new Promise<never>((_,reject)=>{
+          timeout=setTimeout(()=>{
+            timedOut = true;
+            reject(new Error('A consulta de Lavagem e Lubrificação excedeu 20 segundos. Tentando novamente.'));
+            controller.abort();
+          },20_000);
+        }),
       ]);
       if(!mountedRef.current || lifecycle!==lifecycleRef.current)return;
       const sorted = sortBySheetOrder(data);
@@ -308,6 +315,7 @@ export function useSchedules() {
       console.log(`[useSchedules] ✅ ${finalArr.length} registros (mesclados; ${pendingWritesRef.current.size} alteração(ões) local(is) pendente(s))`);
     } catch (err: any) {
       if(!mountedRef.current || lifecycle!==lifecycleRef.current)return;
+      if (!timedOut && (controller.signal.aborted || err?.name === 'AbortError')) return;
       const msg = err.message || 'Erro ao consultar as programações no Supabase';
       console.error('[useSchedules] ❌ Erro:', msg);
 
@@ -387,15 +395,20 @@ export function useSchedules() {
   // Abas em segundo plano podem ter timers congelados. Recuperar a tela/rede
   // deve consultar novamente, mesmo quando outra leitura ainda está em curso.
   useEffect(()=>{
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
     const resume=()=>{syncIfStale(RESUME_MIN_MS);};
-    const visible=()=>{if(document.visibilityState==='visible')resume();};
+    const visible=()=>{if(typeof document !== 'undefined' && document.visibilityState==='visible')resume();};
     window.addEventListener('focus',resume);
     window.addEventListener('online',resume);
-    document.addEventListener('visibilitychange',visible);
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange',visible);
+    }
     return()=>{
       window.removeEventListener('focus',resume);
       window.removeEventListener('online',resume);
-      document.removeEventListener('visibilitychange',visible);
+      if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+        document.removeEventListener('visibilitychange',visible);
+      }
     };
   },[syncIfStale]);
 

@@ -1473,7 +1473,7 @@ export default function Exportar({ schedules }: Props) {
       </div>
 
       {/* Painel de controles */}
-      <div className={`rounded-2xl border p-5 shadow-sm space-y-5 ${isDark ? 'bg-[var(--bg-secondary)] border-white/10' : 'bg-white border-gray-200'}`}>
+      <div className={`rounded-2xl border p-5 shadow-sm space-y-5 ${isDark ? 'glass-card' : 'bg-white border-gray-200'}`}>
 
         {/* Filtros */}
         <div>
@@ -1602,7 +1602,7 @@ export default function Exportar({ schedules }: Props) {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 tabular-nums">
         {[
           { label: 'Atrasado',   value: stats.atrasado,   bg: isDark ? 'bg-red-950/30' : 'bg-red-50',   border: isDark ? 'border-red-800/30' : 'border-red-200',   text: isDark ? 'text-red-400' : 'text-red-700',   num: isDark ? 'text-red-300' : 'text-red-800' },
           { label: 'Pendente',   value: stats.pendente,   bg: isDark ? 'bg-amber-950/30' : 'bg-amber-50', border: isDark ? 'border-amber-800/30' : 'border-amber-200', text: isDark ? 'text-amber-400' : 'text-amber-700', num: isDark ? 'text-amber-300' : 'text-amber-800' },
@@ -1619,7 +1619,7 @@ export default function Exportar({ schedules }: Props) {
 
       {/* Preview */}
       {pages.length > 0 && (
-        <div className={`rounded-2xl border p-4 ${isDark ? 'bg-[var(--bg-secondary)] border-white/10' : 'bg-gray-50 border-gray-200'}`}>
+        <div className={`rounded-2xl border p-4 ${isDark ? 'glass-card' : 'bg-gray-50 border-gray-200'}`}>
           <div className="flex items-center justify-between mb-3">
             <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
               Preview — Página {currentPage + 1} de {pages.length}
