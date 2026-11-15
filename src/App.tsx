@@ -3,7 +3,7 @@ import { useOperationalMinuteClock } from './hooks/useOperationalMinuteClock';
 import {refreshEquipmentImageOverrides} from './lib/equipmentImageRegistry';
 import React, { useEffect, useMemo, useState } from "react";
 import { formatApoioDate } from "./lib/apoioDate";
-import { ThemeProvider } from "./contexts/ThemeContext";
+import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import CentralGerencial from "./pages/CentralGerencial";
@@ -92,6 +92,7 @@ function useHideEncerradasFlag(): HideEncerradasFlag {
 const initialEquipmentEditorReturn = typeof window !== "undefined" && isEquipmentEditorReturn(window.location.href);
 
 function AppInner() {
+  const { isDark } = useTheme();
   const validPages: PageType[] = [
     "central-gerencial",
     "gestao-ordens-manutencao",
@@ -400,27 +401,27 @@ function AppInner() {
         ].includes(page) && (
           <div
             role="alert"
-            style={{
-              padding: "12px 16px",
-              marginBottom: 12,
-              border: "1px solid #c08a28",
-              borderRadius: 12,
-              background: "#fff8e7",
-              color: "#63420b",
-              fontSize: 13,
-              lineHeight: 1.5,
-            }}
+            className="mb-3 rounded-xl px-4 py-3 text-[13px] leading-relaxed border"
+            style={
+              isDark
+                ? {
+                    borderColor: "rgba(251, 191, 36, 0.36)",
+                    background: "rgba(251, 191, 36, 0.11)",
+                    color: "#fde68a",
+                  }
+                : {
+                    borderColor: "#c08a28",
+                    background: "#fff8e7",
+                    color: "#63420b",
+                  }
+            }
           >
             <strong>Lavagem e Lubrificação: atualização pendente.</strong> Os
             dados exibidos podem estar desatualizados. {error}
             <button
               type="button"
               onClick={refresh}
-              style={{
-                marginLeft: 12,
-                textDecoration: "underline",
-                fontWeight: 600,
-              }}
+              className="ml-3 underline font-semibold"
             >
               Tentar atualizar agora
             </button>

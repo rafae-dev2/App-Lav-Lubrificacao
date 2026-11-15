@@ -30,6 +30,8 @@ import MaintenanceOrderCard, {
   MaintenanceStatusBadge,
 } from "../components/MaintenanceOrderCard";
 import EquipmentThumbnail from "../components/EquipmentThumbnail";
+import { VerdanCountUp } from "../components/VerdanAnimatedWidgets";
+import { useTheme } from "../contexts/ThemeContext";
 import { useMaintenanceTracking } from "../hooks/useMaintenanceTracking";
 import {
   buildTrackingRows,
@@ -135,6 +137,8 @@ export default function AcompanhamentoManutencao({
 }: {
   module: TrackingModule;
 }) {
+  const { theme } = useTheme();
+  const isVerdan = theme === "verdan";
   const { data, loading, refreshing, error, refresh, clock } =
     useMaintenanceTracking();
   const [filters, setFilters] = useState({ ...emptyFilters });
@@ -506,7 +510,7 @@ export default function AcompanhamentoManutencao({
             >
               <span className="mt-kpi-label">{kpi.label}</span>
               <Icon size={21} aria-hidden="true" />
-              <strong>{data ? value : "—"}</strong>
+              <strong>{data ? (isVerdan ? <VerdanCountUp value={value} /> : value) : "—"}</strong>
               <small>{data ? kpi.hint : "Aguardando dados"}</small>
             </button>
           );

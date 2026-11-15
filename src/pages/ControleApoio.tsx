@@ -20,6 +20,8 @@ import ApoioOrdersTable from '../components/ApoioOrdersTable';
 import ApoioMultiSelect from '../components/ApoioMultiSelect';
 import ApoioGroupFleetFilter from '../components/ApoioGroupFleetFilter';
 import ApoioWhatsAppPanel from '../components/ApoioWhatsAppPanel';
+import { VerdanCountUp } from '../components/VerdanAnimatedWidgets';
+import { useTheme } from '../contexts/ThemeContext';
 import '../styles/apoio.css';
 import '../styles/apoio-premium.css';
 import '../styles/apoio-reference.css';
@@ -58,6 +60,8 @@ function initialDisplayMode(): DisplayMode {
 }
 
 export default function ControleApoio() {
+  const { theme } = useTheme();
+  const isVerdan = theme === 'verdan';
   const [data, setData] = useState<ApoioData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -329,7 +333,7 @@ export default function ControleApoio() {
             { label: 'Programadas', value: rows.filter(row => getMaintenanceOrderClosure(row).status === 'programado').length, Icon: CalendarDays, hint: 'Programação na origem' },
             { label: 'Em andamento', value: rows.filter(row => getMaintenanceOrderClosure(row).status === 'andamento').length, Icon: Wrench, hint: 'Execução na origem' },
             { label: 'Encerradas', value: closedCount, Icon: CheckCircle2, hint: 'No cadastro próprio' },
-          ].map(kpi => <div className="mt-kpi" key={kpi.label}><span className="mt-kpi-label">{kpi.label}</span><kpi.Icon size={20} aria-hidden="true" /><strong>{kpi.value}</strong><small>{kpi.hint}</small></div>)}
+          ].map(kpi => <div className="mt-kpi" key={kpi.label}><span className="mt-kpi-label">{kpi.label}</span><kpi.Icon size={20} aria-hidden="true" /><strong>{isVerdan ? <VerdanCountUp value={kpi.value} /> : kpi.value}</strong><small>{kpi.hint}</small></div>)}
         </section>
       </>}
       {(error || data?.sync?.erro) && <div role="alert" className="p-4 rounded-xl text-sm flex gap-3" style={{ border: '1px solid #d97706', background: 'rgba(217,119,6,.12)' }}><AlertTriangle size={20} className="shrink-0" /><div><strong>Não foi possível concluir a atualização.</strong><p className="mt-1 break-words">{error || data?.sync?.erro}</p><p className="mt-1">Os dados do último conjunto válido são preservados. Se esta é a primeira instalação, configure o SQL, a função sync-ordens e o agendamento seguindo INSTALAR_CONTROLE_APOIO.md no ZIP.</p></div></div>}

@@ -136,12 +136,23 @@ export const TurnoKanban: React.FC<Props> = ({ schedules, isDark, quickUpdating,
                     </div>
 
                     {cleanScheduleObservation(s) && (
-                      <div className="mt-1.5 text-[10px] px-1.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-300 truncate" title={cleanScheduleObservation(s)}>
+                      <div
+                        className={`mt-1.5 text-[10px] px-1.5 py-1 rounded-md border truncate ${
+                          isDark
+                            ? 'bg-amber-500/15 text-amber-200 border-amber-400/35'
+                            : 'bg-amber-100 text-amber-900 border-amber-300'
+                        }`}
+                        title={cleanScheduleObservation(s)}
+                      >
                         {cleanScheduleObservation(s)}
                       </div>
                     )}
 
-                    {s.situacao === 'ENCERRADO' && effectiveScheduleCompletionDate(s) && <p className="mt-2 text-[11px] text-green-700">Realizada em {fmtDate(effectiveScheduleCompletionDate(s))}</p>}
+                    {s.situacao === 'ENCERRADO' && effectiveScheduleCompletionDate(s) && (
+                      <p className={`mt-2 text-[11px] font-medium ${isDark ? 'text-emerald-300' : 'text-green-700'}`}>
+                        Realizada em {fmtDate(effectiveScheduleCompletionDate(s))}
+                      </p>
+                    )}
                     {/* Ações rápidas no cartão */}
                     <div className={`mt-2 flex items-center gap-1 pt-2 border-t ${isDark ? 'border-white/5' : 'border-gray-100'}`}>
                       {onEdit && <button type="button" onClick={() => onEdit(s)} className="lub-edit" aria-label={`Editar programação da frota ${s.frota}`}><Edit2 size={12} />Editar</button>}

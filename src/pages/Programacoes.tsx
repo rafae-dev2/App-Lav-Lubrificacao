@@ -24,6 +24,13 @@ import { cleanScheduleObservation, effectiveScheduleCompletionDate } from '../li
 import '../styles/lubrificacao.css';
 import '../styles/mobile-operations-v1011.css';
 import {
+  VerdanCountUp,
+  VerdanLollipopStrip,
+  VerdanRadialGauge,
+  VerdanSegmentedProgress,
+  VerdanSparklineCard,
+} from '../components/VerdanAnimatedWidgets';
+import {
   countHideableClosedSchedules,
   getEffectiveHideEncerradas,
   getLocalDateStr,
@@ -77,7 +84,8 @@ function isPcmSchedule(schedule: Programacao): boolean {
 }
 
 export default function Programacoes({ schedules: inputSchedules, onUpdate, onDelete, onAdd, onAddSingle }: Props) {
-  const { isDark } = useTheme();
+  const { isDark, theme } = useTheme();
+  const isVerdan = theme === 'verdan';
   const schedules = useMemo(() => filterLavagemEquipmentSchedules(inputSchedules), [inputSchedules]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<StatusType | 'TODOS'>('TODOS');
@@ -126,6 +134,17 @@ export default function Programacoes({ schedules: inputSchedules, onUpdate, onDe
   useEffect(() => {
     saveProgramacaoViewMode(viewPreferenceKey, viewMode);
   }, [viewMode, viewPreferenceKey]);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !showModal && !historicoFrota) {
+        setFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [fullscreen, showModal, historicoFrota]);
 
   // ─── Ocultação automática de encerradas (corte diário às 07:10) ────────────
   const clock = useOperationalMinuteClock();
@@ -253,6 +272,83 @@ export default function Programacoes({ schedules: inputSchedules, onUpdate, onDe
       })
       .map(({ schedule }) => schedule);
   }, [filteredBeforeTipo, filterTipo, sortField, sortDir]);
+
+  // ─── Métricas derivadas para os painéis animados Verdan OS ────────────────
+  const verdanMetrics = useMemo(() => {
+    const byDate = new Map<string, number>();
+    const byLocal = new Map<string, { count: number; active: boolean }>();
+
+    filtered.forEach((s) => {
+      const dateKey = s.dataProgramada || 'sem-data';
+      byDate.set(dateKey, (byDate.get(dateKey) ?? 0) + 1);
+
+      const localName = (s.descricaoPonto || 'Outros').trim();
+      const prev = byLocal.get(localName) ?? { count: 0, active: false };
+      prev.count += 1;
+      if (s.situacao === 'ANDAMENTO' || s.situacao === 'PROGRAMADO') prev.active = true;
+      byLocal.set(localName, prev);
+    });
+
+    const sortedDates = [...byDate.entries()]
+      .filter(([k]) => k !== 'sem-data')
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-8)
+      .map(([, count]) => count);
+
+    const sparkSeries = sortedDates.length >= 2
+      ? sortedDates
+      : [
+          filtered.filter((s) => s.situacao === 'ATRASADO').length,
+          filtered.filter((s) => s.situacao === 'PENDENTE').length,
+          filtered.filter((s) => s.situacao === 'PROGRAMADO').length,
+          filtered.filter((s) => s.situacao === 'ANDAMENTO').length,
+          filtered.filter((s) => s.situacao === 'ENCERRADO').length,
+        ];
+
+    const localItemsSource = byLocal.size >= 3
+      ? byLocal
+      : filtered.reduce((acc, s) => {
+          const key = (s.apoioNome || s.tipoPreventiva || s.descricaoPonto || 'Frotas').trim();
+          const prev = acc.get(key) ?? { count: 0, active: false };
+          prev.count += 1;
+          if (s.situacao === 'ANDAMENTO' || s.situacao === 'PROGRAMADO') prev.active = true;
+          acc.set(key, prev);
+          return acc;
+        }, new Map<string, { count: number; active: boolean }>());
+
+    const localItems = [...localItemsSource.entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 7)
+      .map(([rawLabel, meta]) => {
+        const label = rawLabel
+          .replace(/^Caminh[õo]es\s+/i, '')
+          .replace(/^Caminh[ãa]o\s+/i, '')
+          .replace(/^Carretas?\s+/i, '')
+          .replace(/^Ve[íi]culos?\s+/i, 'Veíc. ')
+          .replace(/^Tratores?\s+/i, 'Tr. ');
+        return { label, count: meta.count, active: meta.active };
+      });
+    const localChipLabel = byLocal.size >= 3
+      ? `${localItems.length} ${localItems.length === 1 ? 'local' : 'locais'}`
+      : `${localItems.length} ${localItems.length === 1 ? 'frente' : 'frentes'}`;
+
+    const closedTotal = schedules.filter((s) => s.situacao === 'ENCERRADO').length;
+    const overallPct = turnoStats.total > 0
+      ? turnoStats.pct
+      : schedules.length > 0
+        ? Math.round((closedTotal / schedules.length) * 100)
+        : 0;
+    const delayedInSelection = filtered.filter((s) => s.situacao === 'ATRASADO').length;
+
+    return {
+      sparkSeries,
+      localItems,
+      localChipLabel,
+      overallPct,
+      delayedInSelection,
+      activeCount: filtered.filter((s) => s.situacao === 'ANDAMENTO' || s.situacao === 'PROGRAMADO').length,
+    };
+  }, [filtered, schedules, turnoStats]);
 
   const handleSort = (field: keyof Programacao) => {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -455,28 +551,36 @@ export default function Programacoes({ schedules: inputSchedules, onUpdate, onDe
         </div>
       </div>
       {/* Barra de progresso */}
-      <div className={`h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
-        <div className="h-full flex">
-          {turnoStats.encerradas > 0 && (
-            <div
-              className="bg-gradient-to-r from-green-500 to-green-400 transition-all duration-700 ease-out"
-              style={{ width: `${(turnoStats.encerradas / turnoStats.total) * 100}%` }}
-            />
-          )}
-          {turnoStats.andamento > 0 && (
-            <div
-              className="bg-gradient-to-r from-purple-500 to-purple-400 transition-all duration-700 ease-out"
-              style={{ width: `${(turnoStats.andamento / turnoStats.total) * 100}%` }}
-            />
-          )}
-          {turnoStats.atrasadas > 0 && (
-            <div
-              className="bg-gradient-to-r from-red-500 to-red-400 animate-pulse transition-all duration-700 ease-out"
-              style={{ width: `${(turnoStats.atrasadas / turnoStats.total) * 100}%` }}
-            />
-          )}
+      {isVerdan ? (
+        <VerdanSegmentedProgress
+          pct={turnoStats.pct}
+          blocks={6}
+          label={`Progresso do turno: ${turnoStats.pct}%`}
+        />
+      ) : (
+        <div className={`h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
+          <div className="h-full flex">
+            {turnoStats.encerradas > 0 && (
+              <div
+                className="bg-gradient-to-r from-green-500 to-green-400 transition-all duration-700 ease-out"
+                style={{ width: `${(turnoStats.encerradas / turnoStats.total) * 100}%` }}
+              />
+            )}
+            {turnoStats.andamento > 0 && (
+              <div
+                className="bg-gradient-to-r from-purple-500 to-purple-400 transition-all duration-700 ease-out"
+                style={{ width: `${(turnoStats.andamento / turnoStats.total) * 100}%` }}
+              />
+            )}
+            {turnoStats.atrasadas > 0 && (
+              <div
+                className="bg-gradient-to-r from-red-500 to-red-400 animate-pulse transition-all duration-700 ease-out"
+                style={{ width: `${(turnoStats.atrasadas / turnoStats.total) * 100}%` }}
+              />
+            )}
+          </div>
         </div>
-      </div>
+      )}
       {/* Mini cards de status */}
       <div className="flex gap-2 mt-3">
         {[
@@ -509,7 +613,15 @@ export default function Programacoes({ schedules: inputSchedules, onUpdate, onDe
   );
 
   const mainContent = (
-    <div className={`lub-module lub-operations-v1011 flex flex-col ${fullscreen ? `fixed inset-0 z-50 p-4 ${isDark ? 'bg-[var(--bg-primary)]' : 'bg-white'}` : 'space-y-4'}`}>
+    <div
+      className={`lub-module lub-operations-v1011 flex flex-col space-y-4 ${
+        fullscreen
+          ? `lub-fullscreen fixed inset-0 z-[55] overflow-y-auto overflow-x-hidden overscroll-contain p-3 sm:p-5 ${
+              isVerdan ? 'bg-[#07140b]' : isDark ? 'bg-[var(--bg-primary)]' : 'bg-[#f4f0e3]'
+            }`
+          : ''
+      }`}
+    >
       {!compactHeader && <section className="lub-hero" aria-labelledby="lub-title">
         <div className="lub-brand"><img src="/logo.png" alt="Branco Peres Agro S/A" /><div><p className="lub-eyebrow">Manutenção &amp; Frota · Controle operacional</p><h2 id="lub-title">Lavagem e Lubrificação</h2><p>Programação, execução e histórico organizados em um só lugar.</p></div></div>
         <div className="lub-hero-total"><strong>{filtered.length}</strong><span>Ordens na seleção</span></div>
@@ -603,11 +715,15 @@ export default function Programacoes({ schedules: inputSchedules, onUpdate, onDe
             Filtros
           </button>
           <button
+            type="button"
             onClick={() => setFullscreen(f => !f)}
-            className={`p-2 border rounded-lg transition-colors ${isDark ? 'border-white/10 hover:bg-[var(--bg-tertiary)]' : 'border-gray-200 hover:bg-gray-50'}`}
+            className={`flex items-center gap-1.5 p-2 border rounded-lg transition-colors ${isDark ? 'border-white/10 hover:bg-[var(--bg-tertiary)]' : 'border-gray-200 hover:bg-gray-50'}`}
+            aria-label={fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
+            aria-pressed={fullscreen}
             title={fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
           >
             {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            {fullscreen && <span className="text-xs font-semibold">Sair da tela cheia</span>}
           </button>
           <button
             onClick={toggleCompactHeader}
@@ -630,14 +746,51 @@ export default function Programacoes({ schedules: inputSchedules, onUpdate, onDe
         </div>
       </div>
 
+      {!compactHeader && isVerdan && (
+        <section className="verdan-overview-grid" aria-label="Visão geral animada da operação">
+          <div className="verdan-col-span-5">
+            <VerdanSparklineCard
+              title="Ordens na seleção"
+              value={filtered.length}
+              unit="ordens"
+              badge={verdanMetrics.delayedInSelection > 0 ? `${verdanMetrics.delayedInSelection} atrasadas` : 'Em dia'}
+              badgeTone={verdanMetrics.delayedInSelection > 0 ? 'coral' : 'lime'}
+              series={verdanMetrics.sparkSeries}
+              icon={<Zap size={14} />}
+            />
+          </div>
+          <div className="verdan-col-span-4">
+            <VerdanLollipopStrip
+              title="Frentes & Locais ativos"
+              value={verdanMetrics.activeCount}
+              badge={verdanMetrics.localChipLabel}
+              items={verdanMetrics.localItems}
+              icon={<Play size={13} />}
+            />
+          </div>
+          <div className="verdan-col-span-3">
+            <div className="verdan-widget-card verdan-stagger-item items-center justify-center">
+              <div className="verdan-widget-card__head w-full">
+                <span className="verdan-widget-card__title">Conclusão Operacional</span>
+                <span className="verdan-widget-card__icon"><CheckCircle2 size={14} /></span>
+              </div>
+              <VerdanRadialGauge
+                valuePct={verdanMetrics.overallPct}
+                label={turnoStats.total > 0 ? 'TURNO HOJE' : 'CONCLUÍDO'}
+                size={156}
+              />
+            </div>
+          </div>
+        </section>
+      )}
       {!compactHeader && <section className="lub-kpis" aria-label="Situação das programações na seleção">
         {([
-          { status: 'ATRASADO', label: 'Atrasadas', color: '#cd6a55', icon: AlertTriangle },
-          { status: 'PROGRAMADO', label: 'Programadas', color: '#6799bc', icon: CalendarClock },
-          { status: 'PENDENTE', label: 'Pendentes', color: '#c4a259', icon: Clock },
-          { status: 'ANDAMENTO', label: 'Em andamento', color: '#9774b9', icon: Play },
-          { status: 'ENCERRADO', label: 'Encerradas', color: '#2e8b57', icon: CheckCircle2 },
-        ] as const).map(item => <button type="button" key={item.status} className={`lub-kpi${filterStatus === item.status ? ' is-selected' : ''}`} style={{ '--lub-kpi-color': item.color } as React.CSSProperties} aria-pressed={filterStatus === item.status} onClick={() => setFilterStatus(filterStatus === item.status ? 'TODOS' : item.status)}><span className="lub-kpi-label">{item.label}<item.icon size={15} /></span><strong>{filtered.filter(schedule => schedule.situacao === item.status).length}</strong><small>Ordens na seleção atual</small></button>)}
+          { status: 'ATRASADO', label: 'Atrasadas', color: '#f87171', icon: AlertTriangle },
+          { status: 'PROGRAMADO', label: 'Programadas', color: '#38bdf8', icon: CalendarClock },
+          { status: 'PENDENTE', label: 'Pendentes', color: '#fbbf24', icon: Clock },
+          { status: 'ANDAMENTO', label: 'Em andamento', color: '#a78bfa', icon: Play },
+          { status: 'ENCERRADO', label: 'Encerradas', color: '#b7ed40', icon: CheckCircle2 },
+        ] as const).map(item => <button type="button" key={item.status} className={`lub-kpi${filterStatus === item.status ? ' is-selected' : ''}`} style={{ '--lub-kpi-color': item.color } as React.CSSProperties} aria-pressed={filterStatus === item.status} onClick={() => setFilterStatus(filterStatus === item.status ? 'TODOS' : item.status)}><span className="lub-kpi-label">{item.label}<item.icon size={15} /></span><strong>{isVerdan ? <VerdanCountUp value={filtered.filter(schedule => schedule.situacao === item.status).length} /> : filtered.filter(schedule => schedule.situacao === item.status).length}</strong><small>Ordens na seleção atual</small></button>)}
       </section>}
       {/* Barra de Progresso do Turno */}
       {!compactHeader && turnoBar}
@@ -773,17 +926,17 @@ export default function Programacoes({ schedules: inputSchedules, onUpdate, onDe
 
       {/* Table / Kanban */}
       {viewMode === 'tabela' ? (
-        <div className={`lub-table-panel rounded-xl shadow-sm overflow-hidden ${isDark ? 'glass-card' : 'bg-white border border-gray-200'} ${fullscreen ? 'flex-1 overflow-y-auto' : ''}`}>
+        <div className={`lub-table-panel rounded-xl shadow-sm ${fullscreen ? '' : 'overflow-hidden'} ${isDark ? 'glass-card' : 'bg-white border border-gray-200'}`}>
           <div className="lub-table-caption"><strong>Ordens de serviço · {filtered.length}</strong><span>Edição disponível na coluna Ações</span></div>
           {tableContent}
         </div>
       ) : viewMode === 'cartoes' ? (
-        <div className={`lub-table-panel lub-cards-panel rounded-xl shadow-sm overflow-hidden ${isDark ? 'glass-card' : 'bg-white border border-gray-200'} ${fullscreen ? 'flex-1 overflow-y-auto' : ''}`}>
+        <div className={`lub-table-panel lub-cards-panel rounded-xl shadow-sm ${fullscreen ? '' : 'overflow-hidden'} ${isDark ? 'glass-card' : 'bg-white border border-gray-200'}`}>
           <div className="lub-table-caption"><strong>Cartões de serviço · {filtered.length}</strong><span>Toque em Ver detalhes para consultar a narrativa completa</span></div>
           {cardContent}
         </div>
       ) : (
-        <div className={fullscreen ? 'flex-1 overflow-y-auto' : ''}>
+        <div>
           <TurnoKanban
             schedules={filtered}
             isDark={isDark}

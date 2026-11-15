@@ -8,6 +8,8 @@ import { exportManagementExcel, exportManagementPDF } from '../lib/managementRep
 import BIMultiSelect, { type BISelectOption } from '../components/BIMultiSelect';
 import BIOrderExplorer from '../components/BIOrderExplorer';
 import ManagementCharts from '../components/ManagementCharts';
+import { VerdanCountUp } from '../components/VerdanAnimatedWidgets';
+import { useTheme } from '../contexts/ThemeContext';
 import '../styles/central-gerencial.css';
 
 const numberFormat = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
@@ -26,6 +28,8 @@ function options(rows: BIRow[], key: (row: BIRow) => string, label: (row: BIRow)
 }
 
 function CentralGerencial() {
+  const { theme } = useTheme();
+  const isVerdan = theme === 'verdan';
   const { data, loading, refreshing, error, refresh, clock } = useMaintenanceTracking({ automaticRefreshMs: MAINTENANCE_CENTRAL_REFRESH_MS, syncOnAutomaticRefresh: false });
   const [filters, setFilters] = useState<BIFilters>(freshFilters);
   const [advanced, setAdvanced] = useState(false);
@@ -88,15 +92,15 @@ function CentralGerencial() {
     } catch (err) { setExportError(err instanceof Error ? err.message : 'Não foi possível gerar o relatório. Tente novamente.'); }
     finally { setExporting(''); }
   };
-  const kpis = [
-    { label: 'Ordens da seleção', value: n(summary.total), note: `${n(summary.fleets)} frotas distintas`, icon: Layers3, tone: 'green' },
-    { label: 'Carteira aberta', value: n(summary.open), note: `${n(summary.inProgress)} em andamento`, icon: Wrench, tone: 'blue' },
-    { label: 'Em fila atualmente', value: n(summary.waiting), note: 'Programadas e aguardando', icon: ListFilter, tone: 'amber' },
+  const kpis: Array<{ label: string; value: string; numericValue?: number; note: string; icon: typeof Layers3; tone: string }> = [
+    { label: 'Ordens da seleção', value: n(summary.total), numericValue: summary.total, note: `${n(summary.fleets)} frotas distintas`, icon: Layers3, tone: 'green' },
+    { label: 'Carteira aberta', value: n(summary.open), numericValue: summary.open, note: `${n(summary.inProgress)} em andamento`, icon: Wrench, tone: 'blue' },
+    { label: 'Em fila atualmente', value: n(summary.waiting), numericValue: summary.waiting, note: 'Programadas e aguardando', icon: ListFilter, tone: 'amber' },
     { label: 'Idade média da fila', value: day(summary.meanWaitingDays), note: `${n(summary.waitingWithDate)} ordens com data válida`, icon: Clock3, tone: 'amber' },
     { label: 'Mediana / P90 da fila', value: `${day(summary.medianWaitingDays)} / ${day(summary.p90WaitingDays)}`, note: '50% / 90% até esta idade', icon: Activity, tone: 'purple' },
-    { label: 'Previsões vencidas', value: n(summary.overdue), note: 'Somente ordens abertas', icon: ShieldAlert, tone: 'red' },
+    { label: 'Previsões vencidas', value: n(summary.overdue), numericValue: summary.overdue, note: 'Somente ordens abertas', icon: ShieldAlert, tone: 'red' },
     { label: 'Idade média aberta', value: day(summary.meanOpenDays), note: `${n(summary.openWithDate)} ordens com entrada válida`, icon: Truck, tone: 'blue' },
-    { label: 'Encerradas na seleção', value: n(summary.closed), note: `${n(summary.closureDetected)} saídas com data de detecção`, icon: CheckCircle2, tone: 'green' },
+    { label: 'Encerradas na seleção', value: n(summary.closed), numericValue: summary.closed, note: `${n(summary.closureDetected)} saídas com data de detecção`, icon: CheckCircle2, tone: 'green' },
   ];
 
   return <div className="bi-root" data-central="gerencial" aria-busy={loading || refreshing}>
@@ -120,7 +124,7 @@ function CentralGerencial() {
     <div className="bi-view-toolbar"><nav aria-label="Seções da Central Gerencial"><button type="button" aria-pressed={view === 'dashboard'} onClick={() => setView('dashboard')}><BarChart3 size={15} />Painel gerencial</button><button type="button" aria-pressed={view === 'orders'} onClick={() => setView('orders')}><ListFilter size={15} />Consulta de ordens <span>{n(summary.total)}</span></button><button type="button" aria-pressed={view === 'methodology'} onClick={() => setView('methodology')}><BookOpen size={15} />Metodologia</button></nav><div className="bi-presets"><span>Consultas rápidas</span><button type="button" onClick={() => preset('all')}>Geral</button><button type="button" onClick={() => preset('queue')}>Fila</button><button type="button" onClick={() => preset('overdue')}>Vencidas</button><button type="button" onClick={() => preset('external')}>Externas</button><button type="button" onClick={() => preset('closed')}>Encerradas</button></div></div>
 
     {loading && !data ? <div className="bi-loading" role="status"><RefreshCw size={24} className="animate-spin" /><h2>Carregando a visão integrada</h2><p>Consultando grupos, equipamentos e ordens na fonte compartilhada.</p></div> : <>
-      <section className="bi-kpis" aria-label="Indicadores gerenciais">{kpis.map(item => <article className={`bi-kpi bi-kpi-${item.tone}`} key={item.label}><div><span>{item.label}</span><item.icon size={17} /></div><strong>{item.value}</strong><p>{item.note}</p></article>)}</section>
+      <section className="bi-kpis" aria-label="Indicadores gerenciais">{kpis.map(item => <article className={`bi-kpi bi-kpi-${item.tone}`} key={item.label}><div><span>{item.label}</span><item.icon size={17} /></div><strong>{isVerdan && typeof item.numericValue === 'number' ? <VerdanCountUp value={item.numericValue} /> : item.value}</strong><p>{item.note}</p></article>)}</section>
       <div className="bi-method-note"><Clock3 size={15} /><p><strong>Leitura correta dos tempos:</strong> idade da fila é Entrada → agora para a situação atual. A fonte não informa o início do reparo; não é espera líquida ou MTTR. {summary.invalidDates > 0 && <span className="bi-quality-flag">{n(summary.invalidDates)} ordens com entrada ausente/inconsistente não geram média temporal.</span>}</p></div>
       {view === 'dashboard' && <ManagementCharts model={model} onGroup={pickGroup} onStatus={pickStatus} onAgeBand={pickAge} onWorkshop={pickWorkshop} />}
       {view === 'orders' && <BIOrderExplorer rows={rows} selectionKey={selectionKey} />}
