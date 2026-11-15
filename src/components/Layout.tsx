@@ -382,7 +382,7 @@ export default function Layout({
               </span>
             </div>
             <div className="shell-sidebar__last-sync shell-nav-label">{formatLastSync(lastSync)}</div>
-            <div className="shell-sidebar__version shell-nav-label">v10.28 — Gestão de Manutenção</div>
+            <div className="shell-sidebar__version shell-nav-label">v10.29 — Gestão de Manutenção</div>
           </div>
         </div>
       </aside>

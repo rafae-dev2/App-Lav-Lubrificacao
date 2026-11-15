@@ -34,7 +34,13 @@ const CACHE_TTL_MS   = 5 * 60 * 1000;  // 5 minutos
 // entre aparelhos MESMO sem o Realtime do Supabase ligado. Com o Realtime
 // ligado (recomendado), a atualização é instantânea e este intervalo vira
 // apenas uma rede de segurança.
-const AUTO_REFRESH_MS = 15 * 1000; // 15 segundos
+// A fotografia de programações tem ~1,3 MB. Antes eram 4 cargas por minuto por
+// tela aberta (240 por hora); agora o tempo real avisa e o intervalo é só a
+// rede de segurança. A atualização manual continua instantânea.
+const AUTO_REFRESH_MS = 5 * 60 * 1000; // 5 minutos
+/** Menor intervalo entre duas cargas disparadas por tempo real/foco. */
+const REALTIME_MIN_MS = 2 * 60 * 1000;
+const RESUME_MIN_MS = 60 * 1000;
 
 // Janela de proteção: por quanto tempo uma alteração local JÁ CONFIRMADA no
 // banco "vence" leituras do servidor que possam estar atrasadas. Isso é o que
@@ -231,6 +237,7 @@ export function useSchedules() {
   const deletedIdsRef               = useRef<Map<string, number>>(new Map());
   // Debounce para eventos de tempo real (evita rajada de re-syncs).
   const realtimeDebounceRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSyncAtRef               = useRef<number>(0);
 
   // Sincronização principal — busca do banco e mescla com alterações locais
   const syncFromSheet = useCallback(async (silent = false, fresh = false) => {
@@ -297,6 +304,7 @@ export function useSchedules() {
       saveToCache(finalArr);
       setFromCache(false);
       setLastSync(new Date().toLocaleString('pt-BR'));
+      lastSyncAtRef.current = Date.now();
       console.log(`[useSchedules] ✅ ${finalArr.length} registros (mesclados; ${pendingWritesRef.current.size} alteração(ões) local(is) pendente(s))`);
     } catch (err: any) {
       if(!mountedRef.current || lifecycle!==lifecycleRef.current)return;
@@ -325,6 +333,13 @@ export function useSchedules() {
       }
     }
   }, []);
+
+  /** Baixa a fotografia só se a última leitura estiver mais velha que o limite. */
+  const syncIfStale = useCallback((minAgeMs: number) => {
+    if (!mountedRef.current || syncInProgressRef.current) return;
+    if (lastSyncAtRef.current && Date.now() - lastSyncAtRef.current < minAgeMs) return;
+    void syncFromSheet(true, true);
+  }, [syncFromSheet]);
 
   // A confirmação é gravada pela RPC do histórico, fora do CRUD da tabela.
   // Buscar o snapshot fresco para refletir a data confirmada também no controle.
@@ -358,23 +373,21 @@ export function useSchedules() {
     return()=>{if(timer)clearTimeout(timer);};
   }, [syncFromSheet]);
 
-  // Auto-refresh a cada 15 segundos em background. O lock abaixo garante uma
-  // única leitura por vez, inclusive quando o RPC ainda está completando.
+  // Rede de segurança a cada 5 minutos; o tempo real cuida das mudanças.
   useEffect(() => {
     autoRefreshRef.current = setInterval(() => {
-      console.log('[useSchedules] Auto-refresh em background...');
-      void syncFromSheet(true,true); // segurança: sempre consulta fresca
+      syncIfStale(AUTO_REFRESH_MS);
     }, AUTO_REFRESH_MS);
 
     return () => {
       if (autoRefreshRef.current) clearInterval(autoRefreshRef.current);
     };
-  }, [syncFromSheet]);
+  }, [syncIfStale]);
 
   // Abas em segundo plano podem ter timers congelados. Recuperar a tela/rede
   // deve consultar novamente, mesmo quando outra leitura ainda está em curso.
   useEffect(()=>{
-    const resume=()=>{void syncFromSheet(true,true);};
+    const resume=()=>{syncIfStale(RESUME_MIN_MS);};
     const visible=()=>{if(document.visibilityState==='visible')resume();};
     window.addEventListener('focus',resume);
     window.addEventListener('online',resume);
@@ -384,7 +397,7 @@ export function useSchedules() {
       window.removeEventListener('online',resume);
       document.removeEventListener('visibilitychange',visible);
     };
-  },[syncFromSheet]);
+  },[syncIfStale]);
 
   // ─── Tempo real (Supabase Realtime) ────────────────────────────────────────
   // Escuta INSERT/UPDATE/DELETE na tabela e re-sincroniza (silencioso + fresco)
@@ -402,13 +415,13 @@ export function useSchedules() {
           if(!active)return;
           console.log('[useSchedules] 🔴 Realtime:', payload.eventType);
           if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
-          realtimeDebounceRef.current = setTimeout(() => syncFromSheet(true, true), 400);
+          realtimeDebounceRef.current = setTimeout(() => syncIfStale(REALTIME_MIN_MS), 400);
         },
       )
       .subscribe((status) => {
         if(!active)return;
         console.log('[useSchedules] Realtime status:', status);
-        if(status==='SUBSCRIBED')void syncFromSheet(true,true);
+        if(status==='SUBSCRIBED')syncIfStale(RESUME_MIN_MS);
       });
 
     return () => {
@@ -416,7 +429,7 @@ export function useSchedules() {
       if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
       supabase.removeChannel(channel);
     };
-  }, [syncFromSheet]);
+  }, [syncIfStale]);
 
   // Refresh manual (com spinner visível e bypass de cache)
   const refresh = useCallback(() => {

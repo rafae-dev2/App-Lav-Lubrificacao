@@ -49,3 +49,14 @@ export async function saveApoioGroup() { throw new Error('Dados fictícios: muta
 export async function deleteApoioGroup() { throw new Error('Dados fictícios: mutação proibida neste teste.'); }
 export async function saveApoioFleet() { throw new Error('Dados fictícios: mutação proibida neste teste.'); }
 export async function deleteApoioFleet() { throw new Error('Dados fictícios: mutação proibida neste teste.'); }
+
+/** Versão fictícia: igual à fotografia do mock, para o teste não recarregar à toa. */
+export async function loadApoioVersion() {
+  return {
+    fonteAtualizada: data.sync.fonte_atualizada,
+    sincronizadoEm: data.sync.sincronizado_em,
+    total: data.sync.total,
+    erro: null,
+  };
+}
+export async function loadApoioTVData() { return data; }

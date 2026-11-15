@@ -1,6 +1,6 @@
 {
   "name": "branco-peres-lavagem",
-  "version": "10.28.0",
+  "version": "10.29.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "test:acompanhamento": "node tests/maintenanceTracking.test.mjs && node tests/maintenanceTracking.lifecycle.test.mjs && node tests/maintenanceTracking.ui.test.cjs && node tests/maintenanceTracking.report.test.mjs && node tests/maintenanceClassification.audit.test.mjs && node tests/maintenanceSource.test.mjs",
     "test:sql": "node tests/apoio-sql.test.cjs && node tests/maintenanceSQL.test.cjs",
     "test:visual": "node tests/maintenance-visual-build.cjs && python3 tests/maintenance-visual-test.py",
-    "test:encerradas": "node tests/lubrificacao-visibility-0710.test.cjs && node tests/maintenanceVisibility.test.cjs && node tests/maintenanceVisibility.ui.test.cjs && node tests/maintenanceSync.error.test.cjs && node tests/closed-header.test.cjs && node tests/apoio-closure.test.mjs && node tests/tv-orders.test.cjs",
+    "test:encerradas": "node tests/lubrificacao-visibility-0710.test.cjs && node tests/maintenanceVisibility.test.cjs && node tests/maintenanceVisibility.ui.test.cjs && node tests/maintenanceSync.error.test.cjs && node tests/closed-header.test.cjs && node tests/apoio-closure.test.mjs && node tests/tv-orders.test.cjs && node tests/apoio-polling.test.cjs",
     "test:reformas": "node tests/reformEquipment.test.mjs && node tests/reform-modules-ui.test.cjs",
     "test:apoio-tabela": "node tests/apoio-table.test.mjs",
     "test:compacto": "node tests/operational-compact.test.cjs && node tests/lubrificacao-ui.test.cjs",
@@ -41,7 +41,8 @@
     "test:login-editor": "node tests/editor-auth-navigation.test.cjs && node tests/equipmentEditorAuth.test.mjs && node tests/equipmentImageUploadManager.test.mjs && node tests/equipment-editor-auth-browser-build.cjs && python3 tests/equipment-editor-auth-browser-test.py",
     "test:planos-oleo": "node tests/pcm-oil-plans.test.cjs",
     "test:pesquisa-fixa": "node tests/apoio-sticky-search.test.cjs && node tests/apoio-sticky-search-build.cjs && python3 tests/apoio-sticky-search-browser-test.py",
-    "test:oficina-terceiros": "node tests/apoio-oficina-terceiros.test.cjs && node tests/apoio-oficina-terceiros-build.cjs && python3 tests/apoio-oficina-terceiros-browser-test.py && node tests/apoio-oficina-terceiros-ui-build.cjs && python3 tests/apoio-oficina-terceiros-ui-test.py"
+    "test:oficina-terceiros": "node tests/apoio-oficina-terceiros.test.cjs && node tests/apoio-oficina-terceiros-build.cjs && python3 tests/apoio-oficina-terceiros-browser-test.py && node tests/apoio-oficina-terceiros-ui-build.cjs && python3 tests/apoio-oficina-terceiros-ui-test.py",
+    "test:apoio-polling": "node tests/apoio-polling.test.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.1",

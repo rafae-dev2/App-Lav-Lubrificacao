@@ -58,6 +58,83 @@ export async function loadApoioData(): Promise<ApoioData> {
   return data as ApoioData;
 }
 
+/**
+ * Versão da fotografia: 103 bytes que dizem se a planilha mudou.
+ *
+ * `sincronizado_em` muda a cada minuto (o cron roda sempre), por isso não
+ * serve como sinal. `fonte_atualizada` só muda quando a origem é editada.
+ */
+export interface ApoioVersion {
+  fonteAtualizada: string | null;
+  sincronizadoEm: string | null;
+  total: number;
+  erro: string | null;
+}
+
+export async function loadApoioVersion(): Promise<ApoioVersion> {
+  const { data, error } = await apoioClient
+    .from('apoio_sync')
+    .select('fonte_atualizada, sincronizado_em, total, erro')
+    .order('id', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  throwIfError(error, 'consultar versão da fotografia');
+  const row = (data ?? {}) as {
+    fonte_atualizada?: string | null;
+    sincronizado_em?: string | null;
+    total?: number | null;
+    erro?: string | null;
+  };
+  return {
+    fonteAtualizada: row.fonte_atualizada ?? null,
+    sincronizadoEm: row.sincronizado_em ?? null,
+    total: Number(row.total) || 0,
+    erro: row.erro ?? null,
+  };
+}
+
+const TV_ORDER_COLUMNS = [
+  'chave', 'os', 'frota', 'modelo', 'grupo_fonte', 'setor', 'ponto', 'origem',
+  'prestador', 'status', 'entrada', 'previsao', 'narrativa', 'ativo',
+  'primeira_vista', 'ultima_vista', 'ausente_desde', 'classe', 'motivo', 'cd_ponto',
+].join(',');
+
+/**
+ * Fotografia enxuta para a TV: somente ordens ativas (≈450 KB em vez de
+ * 2,46 MB), sem o histórico encerrado que a TV não mostra. O formato é o
+ * mesmo de `loadApoioData`, então as telas não precisam mudar.
+ */
+export async function loadApoioTVData(): Promise<ApoioData> {
+  const [ordersResult, fleetsResult, groupsResult, version] = await Promise.all([
+    apoioClient.from('apoio_ordens').select(TV_ORDER_COLUMNS).eq('ativo', true),
+    apoioClient.from('apoio_frotas').select('frota, grupo_id, nome'),
+    apoioClient.from('apoio_grupos').select('id, nome, cor'),
+    loadApoioVersion(),
+  ]);
+  throwIfError(ordersResult.error, 'carregar ordens da TV');
+  throwIfError(fleetsResult.error, 'carregar frotas da TV');
+  throwIfError(groupsResult.error, 'carregar grupos da TV');
+  if (!Array.isArray(ordersResult.data) || !Array.isArray(fleetsResult.data) || !Array.isArray(groupsResult.data)) {
+    throw new Error('[Apoio] A leitura da TV voltou incompleta. Tente novamente.');
+  }
+  return {
+    orders: ordersResult.data as unknown as ApoioOrder[],
+    fleets: fleetsResult.data as ApoioFleet[],
+    groups: groupsResult.data as ApoioGroup[],
+    sync: version.sincronizadoEm || version.fonteAtualizada
+      ? {
+        id: 0,
+        fonte_atualizada: version.fonteAtualizada,
+        consultado_em: null,
+        sincronizado_em: version.sincronizadoEm,
+        total: version.total,
+        erro: version.erro,
+      } as ApoioSync
+      : null,
+    role: 'viewer',
+  };
+}
+
 export async function saveApoioGroup(group: ApoioGroup): Promise<void> {
   const id = requireNonEmpty(group.id, 'id do grupo');
   const nome = requireNonEmpty(group.nome, 'nome do grupo');

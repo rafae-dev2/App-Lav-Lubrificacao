@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApoioData } from '../types/apoio';
-import { apoioClient, loadApoioData } from '../lib/apoioService';
+import { apoioClient, loadApoioData, loadApoioTVData, loadApoioVersion } from '../lib/apoioService';
+import { APOIO_SNAPSHOT_MAX_AGE_MS, shouldCheckVersion, shouldReloadSnapshot, versionKey } from '../lib/apoioPolling';
 
 export type TVConnection = 'connecting' | 'live' | 'polling' | 'offline';
 export interface UseTVOrdersResult {
@@ -15,9 +16,11 @@ export interface UseTVOrdersResult {
   refresh: () => Promise<void>;
 }
 
+/** Consulta de versão (~100 bytes). A fotografia completa só desce quando muda. */
 const TV_POLL_MS = 30_000;
-const TV_DEBOUNCE_MS = 400;
-const TV_TABLES = ['apoio_ordens', 'apoio_sync', 'apoio_grupos', 'apoio_frotas'] as const;
+const TV_DEBOUNCE_MS = 1_000;
+/** Tabela única que muda uma vez por sincronização, em vez de quatro tabelas. */
+const TV_REALTIME_TABLE = 'apoio_sync';
 
 function isBrowserOnline(): boolean {
   return typeof navigator === 'undefined' || navigator.onLine !== false;
@@ -25,6 +28,15 @@ function isBrowserOnline(): boolean {
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
   return typeof error === 'string' && error ? error : 'Não foi possível ler o snapshot Apoio.';
+}
+
+/** Carga enxuta (somente ordens ativas). Se a leitura direta falhar, usa a RPC completa. */
+async function loadTVSnapshot(): Promise<ApoioData> {
+  try {
+    return await loadApoioTVData();
+  } catch {
+    return loadApoioData();
+  }
 }
 
 /** Read-only: never calls syncApoio or a write RPC. */
@@ -38,8 +50,11 @@ export function useTVOrders(): UseTVOrdersResult {
   const mountedRef = useRef(true);
   const connectionRef = useRef<TVConnection>('connecting');
   const readInFlightRef = useRef<Promise<void> | null>(null);
+  const versionInFlightRef = useRef<Promise<void> | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const readAgainRef = useRef(false);
+  const versionRef = useRef<string | null>(null);
+  const loadedAtRef = useRef<number | null>(null);
+  const lastCheckRef = useRef<number | null>(null);
 
   const setConnectionState = useCallback((next: TVConnection) => {
     connectionRef.current = next;
@@ -64,10 +79,12 @@ export function useTVOrders(): UseTVOrdersResult {
     }
     const operation = (async () => {
       try {
-        const next = await loadApoioData();
+        const next = await loadTVSnapshot();
         if (!mountedRef.current) return;
         setData(next);
         setLastReadAt(new Date().toISOString());
+        versionRef.current = versionKey(next.sync?.fonte_atualizada ?? null);
+        loadedAtRef.current = Date.now();
         setError(null);
         if (connectionRef.current !== 'live') setConnectionState('polling');
       } catch (readError) {
@@ -88,6 +105,39 @@ export function useTVOrders(): UseTVOrdersResult {
     return operation;
   }, [setConnectionState]);
 
+  /** Consulta a versão e baixa a fotografia apenas quando ela muda ou envelhece. */
+  const checkVersion = useCallback((): Promise<void> => {
+    if (!mountedRef.current) return Promise.resolve();
+    if (versionInFlightRef.current) return versionInFlightRef.current;
+    const now = Date.now();
+    if (!shouldCheckVersion(lastCheckRef.current, now)) return Promise.resolve();
+    lastCheckRef.current = now;
+    const operation = (async () => {
+      try {
+        const version = await loadApoioVersion();
+        if (!mountedRef.current) return;
+        if (version.erro) return;
+        const reload = shouldReloadSnapshot(
+          { version: versionRef.current, loadedAt: loadedAtRef.current },
+          version.fonteAtualizada,
+          Date.now(),
+          APOIO_SNAPSHOT_MAX_AGE_MS,
+        );
+        if (reload) await read('silent');
+        else if (connectionRef.current !== 'live') setConnectionState('polling');
+      } catch (checkError) {
+        if (!mountedRef.current) return;
+        setError(errorMessage(checkError));
+        setConnectionState(isBrowserOnline() ? 'polling' : 'offline');
+      }
+    })();
+    versionInFlightRef.current = operation;
+    void operation.finally(() => {
+      if (versionInFlightRef.current === operation) versionInFlightRef.current = null;
+    });
+    return operation;
+  }, [read, setConnectionState]);
+
   const refresh = useCallback(async () => {
     await read('manual');
   }, [read]);
@@ -101,64 +151,56 @@ export function useTVOrders(): UseTVOrdersResult {
   useEffect(() => {
     let active = true;
     const channel = apoioClient.channel('tv_orders_realtime');
-    for (const table of TV_TABLES) {
-      channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => {
+    // Escuta só o controle de sincronização: um evento por minuto em vez de
+    // um por ordem alterada, sem baixar a fotografia a cada evento.
+    channel.on('postgres_changes', { event: '*', schema: 'public', table: TV_REALTIME_TABLE }, () => {
+      if (!active || !mountedRef.current) return;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
         if (!active || !mountedRef.current) return;
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(() => {
-          debounceRef.current = null;
-          if (!active || !mountedRef.current) return;
-          if (readInFlightRef.current) {
-            if (readAgainRef.current) return;
-            readAgainRef.current = true;
-            void readInFlightRef.current.finally(() => {
-              readAgainRef.current = false;
-              if (active && mountedRef.current) void read('silent');
-            });
-          } else void read('silent');
-        }, TV_DEBOUNCE_MS);
-      });
-    }
+        void checkVersion();
+      }, TV_DEBOUNCE_MS);
+    });
     channel.subscribe((status: string) => {
       if (!active || !mountedRef.current) return;
       if (status === 'SUBSCRIBED') {
         setConnectionState('live');
         // Fecha a janela entre a leitura inicial e a assinatura Realtime.
-        if (mountedRef.current) void read('silent');
+        if (mountedRef.current) void checkVersion();
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
         setConnectionState(isBrowserOnline() ? 'polling' : 'offline');
       }
     });
     return () => {
       active = false;
-      readAgainRef.current = false;
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = null;
       void apoioClient.removeChannel(channel);
     };
-  }, [read, setConnectionState]);
+  }, [checkVersion, setConnectionState]);
 
   useEffect(() => {
     const interval = setInterval(() => {
       // navigator.onLine é apenas uma dica e pode ficar false em webviews,
-      // modos de economia ou redes com internet acessível. Tente o snapshot
-      // periodicamente mesmo assim; apenas a resposta HTTP confirma a conexão.
-      void read('silent');
+      // modos de economia ou redes com internet acessível. A consulta de
+      // versão confirma a conexão sem baixar a fotografia inteira.
+      void checkVersion();
     }, TV_POLL_MS);
     return () => clearInterval(interval);
-  }, [read]);
+  }, [checkVersion]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const handleOffline = () => setConnectionState('offline');
     const handleOnline = () => {
       if (connectionRef.current !== 'live') setConnectionState('polling');
-      void read('silent');
+      void checkVersion();
     };
     const handleVisible = () => {
       if (document.visibilityState !== 'visible') return;
       if (connectionRef.current !== 'live') setConnectionState('polling');
-      void read('silent');
+      void checkVersion();
     };
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online', handleOnline);
@@ -169,7 +211,7 @@ export function useTVOrders(): UseTVOrdersResult {
       window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisible);
     };
-  }, [read, setConnectionState]);
+  }, [checkVersion, setConnectionState]);
 
   return { data, loading, refreshing, error, connection, lastReadAt, refresh };
 }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, FileText, Download, Plus, Save, Trash2, Search, AlertTriangle, Truck, Wrench, Building2, Clock, Settings2, MessageSquare, ClipboardList, CalendarDays, CheckCircle2, Filter, Eye } from 'lucide-react';
-import { loadApoioData, saveApoioGroup, deleteApoioGroup, saveApoioFleet, deleteApoioFleet, syncApoio } from '../lib/apoioService';
+import { loadApoioData, loadApoioVersion, saveApoioGroup, deleteApoioGroup, saveApoioFleet, deleteApoioFleet, syncApoio } from '../lib/apoioService';
+import { APOIO_SNAPSHOT_MAX_AGE_MS, shouldReloadSnapshot, versionKey } from '../lib/apoioPolling';
 import { exportApoioPDF, exportApoioExcel } from '../lib/apoioReport';
 import { exportApoioImages, APOIO_IMAGE_FORMATS, type ApoioImageFormat, type ApoioImageQuality } from '../lib/apoioImageReport';
 import { exportOficinaTerceirosImages } from '../lib/apoioOficinaTerceirosReport';
@@ -90,6 +91,9 @@ export default function ControleApoio() {
   const [fleetDraft, setFleetDraft] = useState({ frotas: '', grupo_id: '', nome: '' });
   const mounted = useRef(true);
   const reading = useRef(false);
+  const versionRef = useRef<string | null>(null);
+  const loadedAtRef = useRef<number | null>(null);
+  const checkingVersion = useRef(false);
 
   useEffect(() => {
     try { window.localStorage.setItem(DISPLAY_MODE_STORAGE_KEY, displayMode); } catch { /* preferência opcional */ }
@@ -105,7 +109,12 @@ export default function ControleApoio() {
         try { await syncApoio(); } catch (err) { syncError = msg(err); }
       }
       const next = await loadApoioData();
-      if (mounted.current) { setData(next); setError(syncError); }
+      if (mounted.current) {
+        setData(next);
+        setError(syncError);
+        versionRef.current = versionKey(next.sync?.fonte_atualizada ?? null);
+        loadedAtRef.current = Date.now();
+      }
     } catch (err) {
       if (mounted.current) setError(msg(err));
     } finally {
@@ -114,10 +123,34 @@ export default function ControleApoio() {
     }
   }, []);
 
+  /**
+   * Consulta só a versão (~100 bytes) e baixa a fotografia completa apenas
+   * quando a planilha mudou ou a última leitura envelheceu. Antes, cada tela
+   * aberta baixava 2,46 MB por minuto e ainda disparava uma sincronização.
+   */
+  const checkVersion = useCallback(async () => {
+    if (reading.current || checkingVersion.current) return;
+    checkingVersion.current = true;
+    try {
+      const version = await loadApoioVersion();
+      if (!mounted.current || version.erro) return;
+      if (shouldReloadSnapshot(
+        { version: versionRef.current, loadedAt: loadedAtRef.current },
+        version.fonteAtualizada,
+        Date.now(),
+        APOIO_SNAPSHOT_MAX_AGE_MS,
+      )) await refresh(false);
+    } catch {
+      /* A próxima verificação tenta de novo; a tela continua com os dados atuais. */
+    } finally {
+      checkingVersion.current = false;
+    }
+  }, [refresh]);
+
   useEffect(() => {
     mounted.current = true;
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, 60_000);
+    const timer = window.setInterval(() => { void checkVersion(); }, 60_000);
     const handleGlobalRefresh = () => { void refresh(); };
     window.addEventListener('bp:apoio-refresh', handleGlobalRefresh);
     return () => {
@@ -125,7 +158,7 @@ export default function ControleApoio() {
       window.clearInterval(timer);
       window.removeEventListener('bp:apoio-refresh', handleGlobalRefresh);
     };
-  }, [refresh]);
+  }, [checkVersion, refresh]);
 
   useEffect(() => {
     if (!data) return;
