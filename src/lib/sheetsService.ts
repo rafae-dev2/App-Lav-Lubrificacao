@@ -286,15 +286,35 @@ function isMissingProgramacoesRpc(error: { code?: string; message?: string } | n
     || /schema cache.*carregar_lavagem_programacoes/.test(message);
 }
 
+function isAbortError(
+  error: { name?: string; code?: string; message?: string } | null | undefined,
+  signal?: AbortSignal,
+): boolean {
+  if (signal?.aborted) return true;
+  const name = String(error?.name || '');
+  const message = String(error?.message || '');
+  return name === 'AbortError' || /\babort(ed|error)?\b/i.test(message);
+}
+
+function createAbortError(): Error {
+  const abortErr = new Error('Consulta de programações cancelada.');
+  abortErr.name = 'AbortError';
+  return abortErr;
+}
+
 async function fetchLegacySchedules(signal?: AbortSignal): Promise<DbRow[]> {
   const rows: DbRow[] = [];
   for (let offset = 0; ; offset += LEGACY_PAGE_SIZE) {
+    if (signal?.aborted) throw createAbortError();
     let query=supabase.from(LAVAGEM_TABLE).select(LEGACY_COLUMNS)
       .order('id',{ascending:true}).range(offset,offset+LEGACY_PAGE_SIZE-1);
     if(signal)query=query.abortSignal(signal);
     const {data,error}=await query;
 
-    if (error) throw new Error(`Supabase: ${error.message}`);
+    if (error) {
+      if (isAbortError(error, signal)) throw createAbortError();
+      throw new Error(`Supabase: ${error.message}`);
+    }
     const page = (data || []) as DbRow[];
     rows.push(...page);
     if (page.length < LEGACY_PAGE_SIZE) break;
@@ -303,6 +323,7 @@ async function fetchLegacySchedules(signal?: AbortSignal): Promise<DbRow[]> {
 }
 
 export async function fetchSchedules(_opts?: { fresh?: boolean; signal?: AbortSignal }): Promise<Programacao[]> {
+  if (_opts?.signal?.aborted) throw createAbortError();
   console.log('[supabase] Buscando snapshot de programações via RPC...');
 
   let rows: DbRow[];
@@ -310,6 +331,9 @@ export async function fetchSchedules(_opts?: { fresh?: boolean; signal?: AbortSi
   if(_opts?.signal)query=query.abortSignal(_opts.signal);
   const { data, error } = await query;
   if (error) {
+    if (isAbortError(error, _opts?.signal)) {
+      throw createAbortError();
+    }
     if (!isMissingProgramacoesRpc(error)) {
       console.error('[supabase] Erro no RPC de programações:', error.message);
       throw new Error(`Supabase: ${error.message}`);
