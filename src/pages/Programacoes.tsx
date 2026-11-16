@@ -14,6 +14,7 @@ import { ptBR } from 'date-fns/locale';
 import { nanoid } from 'nanoid';
 import { useAdvancedFilters } from '../hooks/useAdvancedFilters';
 import { useTheme } from '../contexts/ThemeContext';
+import AmbientBrandWatermark from '../components/AmbientBrandWatermark';
 import TurnoKanban from '../components/TurnoKanban';
 import HistoricoFrotaModal from '../components/HistoricoFrotaModal';
 import PCMHistoryPanel from '../components/PCMHistoryPanel';
@@ -617,11 +618,12 @@ export default function Programacoes({ schedules: inputSchedules, onUpdate, onDe
       className={`lub-module lub-operations-v1011 flex flex-col space-y-4 ${
         fullscreen
           ? `lub-fullscreen fixed inset-0 z-[55] overflow-y-auto overflow-x-hidden overscroll-contain p-3 sm:p-5 ${
-              isVerdan ? 'bg-[#07140b]' : isDark ? 'bg-[var(--bg-primary)]' : 'bg-[#f4f0e3]'
+              isVerdan ? 'bg-[#050d08]' : isDark ? 'bg-[var(--bg-primary)]' : 'bg-[#f4f0e3]'
             }`
           : ''
       }`}
     >
+      {fullscreen && <AmbientBrandWatermark variant="fullscreen" />}
       {!compactHeader && <section className="lub-hero" aria-labelledby="lub-title">
         <div className="lub-brand"><img src="/logo.png" alt="Branco Peres Agro S/A" /><div><p className="lub-eyebrow">Manutenção &amp; Frota · Controle operacional</p><h2 id="lub-title">Lavagem e Lubrificação</h2><p>Programação, execução e histórico organizados em um só lugar.</p></div></div>
         <div className="lub-hero-total"><strong>{filtered.length}</strong><span>Ordens na seleção</span></div>

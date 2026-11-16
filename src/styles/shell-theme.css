@@ -17,7 +17,7 @@
 }
 
 /* Reference palette: Gestão de Ordens / Controle Apoio light mode. */
-html:not(.dark):not(.theme-ocean):not(.theme-sunset):not(.theme-forest):not(.theme-midnight):not(.theme-copper):not(.theme-rose):not(.theme-arctic):not(.theme-lavender):not(.theme-glass) {
+html:not(.dark):not(.theme-black-cyan):not(.theme-ios-liquid-glass):not(.theme-ocean):not(.theme-sunset):not(.theme-forest):not(.theme-midnight):not(.theme-copper):not(.theme-rose):not(.theme-arctic):not(.theme-lavender):not(.theme-glass) {
   --brand-green: #1F6B45 !important;
   --brand-green-light: #2E8B57 !important;
   --brand-yellow: #B7791F !important;
@@ -88,7 +88,7 @@ html:not(.dark):not(.theme-ocean):not(.theme-sunset):not(.theme-forest):not(.the
 
 /* The base light theme also uses the reference green header. Alternate light
  * themes continue to resolve through their existing theme variables. */
-html:not(.dark):not(.theme-ocean):not(.theme-sunset):not(.theme-forest):not(.theme-midnight):not(.theme-copper):not(.theme-rose):not(.theme-arctic):not(.theme-lavender):not(.theme-glass) .app-shell {
+html:not(.dark):not(.theme-black-cyan):not(.theme-ios-liquid-glass):not(.theme-ocean):not(.theme-sunset):not(.theme-forest):not(.theme-midnight):not(.theme-copper):not(.theme-rose):not(.theme-arctic):not(.theme-lavender):not(.theme-glass) .app-shell {
   --shell-header-bg: #1F6B45;
   --shell-header-text: #FFFFFF;
   --shell-header-muted: rgba(255, 255, 255, 0.84);

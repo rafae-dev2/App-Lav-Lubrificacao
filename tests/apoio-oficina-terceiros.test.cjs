@@ -52,18 +52,65 @@ function row(overrides = {}) {
 function main() {
   const {
     selectOficinaTerceirosEquipment,
+    selectOficinaReportEquipment,
+    selectOficinaReportOrders,
+    buildOficinaTerceirosExcelData,
+    normalizeOficinaScope,
+    readStoredOficinaScope,
+    saveStoredOficinaScope,
+    OFICINA_SCOPE_STORAGE_KEY,
     filterOficinaTerceirosEntries,
     oficinaTerceirosProviderOptions,
     oficinaTerceirosSummary,
+    oficinaReportTitle,
+    oficinaReportFilenameBase,
     OFICINA_TERCEIROS_TITLE,
+    EMERGENCIA_INTERNA_CAMPO_TITLE,
+    OFICINA_E_EMERGENCIA_TITLE,
     OFICINA_TERCEIROS_IMAGE,
   } = loadHelper();
 
   assert.equal(typeof selectOficinaTerceirosEquipment, 'function');
+  assert.equal(typeof selectOficinaReportEquipment, 'function');
+  assert.equal(typeof selectOficinaReportOrders, 'function');
+  assert.equal(typeof buildOficinaTerceirosExcelData, 'function');
   assert.equal(OFICINA_TERCEIROS_TITLE, 'Equipamentos em Oficina de Terceiros');
+  assert.equal(oficinaReportTitle('externa'), OFICINA_TERCEIROS_TITLE);
+  assert.equal(oficinaReportTitle('emergencia'), EMERGENCIA_INTERNA_CAMPO_TITLE);
+  assert.equal(oficinaReportTitle('juntos'), OFICINA_E_EMERGENCIA_TITLE);
+  assert.equal(oficinaReportFilenameBase('externa'), 'equipamentos-oficina-terceiros');
+  assert.equal(oficinaReportFilenameBase('emergencia'), 'equipamentos-emergenciais-interna-campo');
+  assert.equal(oficinaReportFilenameBase('juntos'), 'equipamentos-terceiros-e-emergenciais');
   assert.deepEqual({ ...OFICINA_TERCEIROS_IMAGE }, { width: 921, height: 1600 });
 
-  // Somente oficina externa entra; interna, campo e origem desconhecida ficam fora.
+  // Normalização e persistência em localStorage (SSR-safe e armazenamento simulado).
+  assert.equal(normalizeOficinaScope(undefined), 'externa');
+  assert.equal(normalizeOficinaScope('emergencia'), 'emergencia');
+  assert.equal(normalizeOficinaScope('separados'), 'emergencia');
+  assert.equal(normalizeOficinaScope('juntos'), 'juntos');
+  assert.equal(normalizeOficinaScope('junto'), 'juntos');
+  assert.equal(normalizeOficinaScope('invalido'), 'externa');
+  assert.equal(readStoredOficinaScope(), 'externa', 'SSR sem window retorna externa por padrão');
+
+  const store = new Map();
+  global.window = {
+    localStorage: {
+      getItem: k => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => { store.set(k, String(v)); },
+    },
+  };
+  try {
+    assert.equal(readStoredOficinaScope(), 'externa');
+    saveStoredOficinaScope('emergencia');
+    assert.equal(store.get(OFICINA_SCOPE_STORAGE_KEY), 'emergencia');
+    assert.equal(readStoredOficinaScope(), 'emergencia');
+    saveStoredOficinaScope('juntos');
+    assert.equal(readStoredOficinaScope(), 'juntos');
+  } finally {
+    delete global.window;
+  }
+
+  // Somente oficina externa entra no modo padrão ('externa'); interna, campo e origem desconhecida ficam fora.
   const rows = [
     row({ chave: 'a', frota: '8825', origem: 'Oficina Externa' }),
     row({ chave: 'b', frota: '30941', origem: 'terceiro', modelo: 'Usi Reboque Muda 2 Eixos', prestador: 'BONANI, OLIVEIRA & FRESCA LTDA - ME', apoio: 'Carretas Canavieiras' }),
@@ -87,6 +134,65 @@ function main() {
   assert.equal(entries[1].modelo, 'Usi Reboque Muda 2 Eixos');
   assert.equal(entries[2].prestador, 'CARLOS HENRIQUE DA COSTA FRASSON-ME');
   assert.equal(entries[1].grupo, 'Carretas Canavieiras');
+
+  // Escopo 'emergencia' e 'juntos': apenas ordens com classe 'CORRET EMERGENCIAL' em Oficina Interna ou Campo.
+  const mixedRows = [
+    ...rows,
+    row({ chave: 'em-1', frota: '7101', origem: 'Oficina Interna', classe: 'CORRET EMERGENCIAL', setor: 'Oficina Elétrica', prestador: 'Oficina Interna', modelo: 'Colhedora John Deere' }),
+    row({ chave: 'em-2', frota: '7102', origem: 'Campo', classe: 'CORRET EMERGENCIAL', prestador: 'Campo', modelo: 'Trator Case 290' }),
+    row({ chave: 'em-3', frota: '7103', origem: 'Oficina Interna', classe: 'PREVENTIVA', narrativa: 'Emergencial no texto não classifica classe', prestador: 'Oficina Interna' }),
+    row({ chave: 'em-4', frota: '7104', origem: 'Campo', classe: 'CORRET EMERGENCIAL', status: 'Encerrada' }),
+    row({ chave: 'em-5', frota: '7105', origem: 'Oficina Externa', classe: 'CORRET EMERGENCIAL', prestador: 'OFICINA FORA' }),
+  ];
+
+  const somenteEmergencias = selectOficinaReportEquipment(mixedRows, 'emergencia');
+  assert.deepEqual(somenteEmergencias.map(e => e.frota), ['7101', '7102'], 'somente emergenciais ativas de Oficina Interna e Campo');
+  assert.equal(somenteEmergencias[0].categoria, 'emergencial_interna');
+  assert.equal(somenteEmergencias[0].prestador, 'Oficina Interna · Oficina Elétrica (Emergencial)');
+  assert.equal(somenteEmergencias[1].categoria, 'emergencial_campo');
+  assert.equal(somenteEmergencias[1].prestador, 'Campo · Emergencial');
+  assert.equal(
+    oficinaTerceirosSummary(somenteEmergencias, 'emergencia'),
+    '2 equipamentos emergenciais (1 oficina interna · 1 campo)',
+  );
+
+  const juntos = selectOficinaReportEquipment(mixedRows, 'juntos');
+  assert.deepEqual(
+    juntos.map(e => e.frota),
+    ['8825', '30941', '4605', '7101', '7102', '7105'],
+    'juntos reúne oficina externa + emergenciais em oficina interna e campo',
+  );
+  assert.equal(
+    oficinaTerceirosSummary(juntos, 'juntos'),
+    '6 equipamentos (4 terceiros · 2 emergenciais interna/campo)',
+  );
+  assert.deepEqual(
+    filterOficinaTerceirosEntries(juntos, { query: 'campo' }).map(e => e.frota),
+    ['7102'],
+    'busca no modo juntos também encontra por local (Campo)',
+  );
+
+  // Exportação de dados (ordens vinculadas e planilha Excel) respeita o escopo e os itens desmarcados.
+  const emergOrders = selectOficinaReportOrders(mixedRows, 'emergencia', { excludedFleets: ['7102'] });
+  assert.deepEqual(emergOrders.map(o => o.chave), ['em-1'], 'exportação no modo emergência exclui desmarcados e externas');
+
+  const juntosOrders = selectOficinaReportOrders(mixedRows, 'juntos', { excludedFleets: ['8825'] });
+  assert.deepEqual(
+    juntosOrders.map(o => o.chave),
+    ['b', 'c', 'em-1', 'em-2', 'em-5'],
+    'exportação no modo juntos reúne externas e emergenciais marcadas',
+  );
+
+  const excelData = buildOficinaTerceirosExcelData(
+    juntos.filter(e => e.frota !== '8825'),
+    juntosOrders,
+    { scope: 'juntos' },
+  );
+  assert.equal(excelData.equipmentRows.length, 5);
+  assert.equal(excelData.orderRows.length, 5);
+  assert.equal(excelData.equipmentRows.find(r => r.Equipamento === '7101').Emergencial, 'Sim');
+  assert.equal(excelData.equipmentRows.find(r => r.Equipamento === '30941').Emergencial, 'Não');
+  assert.equal(excelData.metaRows.find(([k]) => k === 'Modo de visualização')[1], 'Junto · Oficina de Terceiros + Emergenciais (Interna e Campo)');
 
   // Modelo cai para o nome do equipamento e depois para o texto padrão;
   // prestador vazio nunca some da imagem.
@@ -140,7 +246,7 @@ function main() {
     { value: 'SILAS EDUARDO MOURA DA SILVA', label: 'SILAS EDUARDO MOURA DA SILVA', count: 1 },
   ], 'opções de oficina ordenadas com contagem');
 
-  console.log('OK: oficina de terceiros — somente externas ativas, frota única, modelo/prestador com fallback, ordem, não mutação e filtros do relatório verificados.');
+  console.log('OK: oficina de terceiros — localStorage, externas, emergenciais (Interna/Campo), modo junto, exportação Excel/PDF/PNG e filtros verificados.');
 }
 
 try {

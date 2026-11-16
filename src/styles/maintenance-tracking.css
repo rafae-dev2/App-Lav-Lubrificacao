@@ -15,7 +15,7 @@
   color: var(--mt-text);
   background: var(--mt-ivory);
   color-scheme: light;
-  font-family: "Segoe UI", Arial, sans-serif;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif;
   line-height: 1.45;
 }
 

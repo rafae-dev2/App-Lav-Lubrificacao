@@ -158,6 +158,15 @@ function AppInner() {
     return () => window.removeEventListener(MAINTENANCE_STATE_EVENT, onState);
   }, []);
 
+  const activeLavagemPage = [
+    "dashboard",
+    "programacoes",
+    "calendario",
+    "importar",
+    "exportar",
+    "configuracoes",
+  ].includes(page);
+
   const {
     schedules,
     loading,
@@ -171,7 +180,7 @@ function AppInner() {
     addSingleSchedule,
     updateSchedule,
     deleteSchedule,
-  } = useSchedules();
+  } = useSchedules({ activeLavagemPage });
 
   const lavagemSchedules = useMemo(() => filterLavagemEquipmentSchedules(schedules), [schedules]);
 
@@ -325,7 +334,7 @@ function AppInner() {
     // Dashboard, Importar e Exportar da Lavagem agora vivem DENTRO de
     // Programa\u00e7\u00f5es, por meio de uma barra de abas no topo.
     return (
-      <LavagemPremiumLayout refreshing={syncing} onRefresh={refresh}>
+      <LavagemPremiumLayout refreshing={syncing} onRefresh={refresh} activeTab={page}>
         <LavagemTabs
           current={page}
           onNavigate={setPage}

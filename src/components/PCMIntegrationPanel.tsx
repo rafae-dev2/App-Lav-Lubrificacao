@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ChevronDown, ChevronUp, RefreshCw, Save, Search } from 'lucide-react';
 import { classifyPCMOrder, loadPCMReview, type PCMClassification, type PCMReviewData, type PCMReviewOrder } from '../lib/pcmService';
 import { syncApoio } from '../lib/apoioService';
+import { isNavigatorOnline, isPageVisible } from '../lib/egressCachePolicy';
 import { isHiddenLavagemEquipment } from '../lib/lavagemEquipmentScope';
 
 const box: React.CSSProperties = { border: '1px solid var(--border-primary)', borderRadius: 16, background: 'var(--bg-card)', color: 'var(--text-primary)' };
@@ -32,20 +33,24 @@ export default function PCMIntegrationPanel({ onChanged, hideMainEquipment = fal
   const inFlight = useRef(false);
   const [page, setPage] = useState(1);
 
-  const refresh = useCallback(async (consult = false) => {
+  const refresh = useCallback(async (consult = false, force = consult) => {
     if (inFlight.current) return;
     inFlight.current = true; setLoading(true);
     let syncError = '';
     try {
-      if (consult) { try { await syncApoio(); } catch (err) { syncError = err instanceof Error ? err.message : String(err); } }
-      const next = await loadPCMReview();
+      if (consult) { try { await syncApoio({ force: true }); } catch (err) { syncError = err instanceof Error ? err.message : String(err); } }
+      const next = await loadPCMReview({ force });
       if (alive.current) { setData(next); setError(syncError); }
     } catch (err) { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }
     finally { inFlight.current = false; if (alive.current) setLoading(false); }
   }, []);
   useEffect(() => {
-    alive.current = true; void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, 60_000);
+    alive.current = true; void refresh(false, false);
+    const maybeAutoRefresh = () => {
+      if (!isPageVisible() || !isNavigatorOnline()) return;
+      void refresh(false, false);
+    };
+    const timer = window.setInterval(maybeAutoRefresh, 3 * 60_000);
     return () => { alive.current = false; window.clearInterval(timer); };
   }, [refresh]);
   useEffect(() => { setPage(1); }, [scope, query]);
@@ -72,7 +77,7 @@ export default function PCMIntegrationPanel({ onChanged, hideMainEquipment = fal
       await classifyPCMOrder(order.chave, choice);
       setNotice(`OS ${order.os}: classificação salva e compartilhada.`);
       setDrafts(current => { const next = { ...current }; delete next[order.chave]; return next; });
-      await refresh(); onChanged();
+      await refresh(false, true); onChanged();
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(''); }
   };
@@ -80,9 +85,9 @@ export default function PCMIntegrationPanel({ onChanged, hideMainEquipment = fal
   return <section className="p-4 mb-4 space-y-3" style={{ ...box, background: 'linear-gradient(115deg, rgba(31,107,69,.18), var(--bg-card))' }}>
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h3 className="font-bold">Programação automática · PCM → Apoio</h3><p className="text-xs mt-1" style={muted}>Somente frotas cadastradas no Apoio. Lavagem/Lubrificação e Troca de Óleo são controles separados por OS.</p></div>
-      <div className="flex flex-wrap gap-2"><button className={button} style={neutral} disabled={loading || Boolean(busy)} onClick={() => { void refresh(true).then(onChanged); }}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} />{loading ? 'Consultando…' : 'Consultar PCM'}</button><button className={button} style={green} aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Revisar classificação{pending > 0 ? ` · ${pending}` : ''}</button></div>
+      <div className="flex flex-wrap gap-2"><button className={button} style={neutral} disabled={loading || Boolean(busy)} onClick={() => { void refresh(true, true).then(onChanged); }}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} />{loading ? 'Consultando…' : 'Consultar PCM'}</button><button className={button} style={green} aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Revisar classificação{pending > 0 ? ` · ${pending}` : ''}</button></div>
     </div>
-    <p className="text-xs" style={muted}>Dados do PCM: {timestamp(sourceDate)} · Consulta automática no servidor a cada minuto; novos dados entram conforme o PCM publica.</p>
+    <p className="text-xs" style={muted}>Dados do PCM: {timestamp(sourceDate)} · Consulta econômica automática a cada 3 min com aba ativa.</p>
     <p className="text-xs" style={muted}>A Entrada define a programação. A saída de uma listagem válida encerra automaticamente o controle, com data de detecção no histórico — não preenche uma data de execução desconhecida.</p>
     {data && (stale || data.sync?.erro) && <p className="text-xs p-3 rounded-lg flex gap-2" style={{ background: 'rgba(217,119,6,.12)', color: '#b7791f' }}><AlertTriangle size={16} className="shrink-0" />Atualização pendente. As últimas programações válidas são preservadas; falhas e dados antigos não encerram ordens.</p>}
     {error && <p role="alert" className="text-xs text-red-500 break-words">{error}</p>}

@@ -6,6 +6,7 @@ import { ApoioData } from "../types/apoio";
 export const MAINTENANCE_REFRESH_EVENT = "bp:maintenance-refresh";
 export const MAINTENANCE_STATE_EVENT = "bp:maintenance-state";
 export const MAINTENANCE_DEFAULT_REFRESH_MS = 60_000;
+export const MAINTENANCE_TRACKING_REFRESH_MS = 3 * 60_000;
 export const MAINTENANCE_CENTRAL_REFRESH_MS = 5 * 60_000;
 const AUTOMATIC_RETRY_LIMIT = 3;
 const AUTOMATIC_RETRY_DELAY_MS = 5_000;
@@ -27,7 +28,7 @@ function positiveInterval(value: number | undefined, fallback: number): number {
   return Number.isFinite(value) && value! > 0 ? value! : fallback;
 }
 
-/** Compartilha a integração existente; não escreve ordens nem inventa cache. */
+/** Compartilha a integração existente; não escreve ordens nem inventa cache local persistido. */
 export function useMaintenanceTracking(options: MaintenanceTrackingOptions = {}) {
   const automaticRefreshMs = positiveInterval(options.automaticRefreshMs, MAINTENANCE_DEFAULT_REFRESH_MS);
   const syncOnAutomaticRefresh = options.syncOnAutomaticRefresh ?? true;
@@ -62,12 +63,12 @@ export function useMaintenanceTracking(options: MaintenanceTrackingOptions = {})
     try {
       if (manual || syncOnAutomaticRefresh) {
         try {
-          await syncApoio();
+          await syncApoio({ force: manual });
         } catch (err) {
           sourceError = err instanceof Error ? err.message : String(err);
         }
       }
-      const next = await loadMaintenanceData();
+      const next = await loadMaintenanceData({ force: manual });
       if (mounted.current) {
         // Só substitui a fotografia depois de uma leitura completa e validada.
         setData(next);

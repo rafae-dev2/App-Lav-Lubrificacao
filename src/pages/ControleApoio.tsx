@@ -1,16 +1,31 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, FileText, Download, Plus, Save, Trash2, Search, AlertTriangle, Truck, Wrench, Building2, Clock, Settings2, MessageSquare, ClipboardList, CalendarDays, CheckCircle2, Filter, Eye } from 'lucide-react';
-import { loadApoioData, loadApoioVersion, saveApoioGroup, deleteApoioGroup, saveApoioFleet, deleteApoioFleet, syncApoio } from '../lib/apoioService';
-import { APOIO_SNAPSHOT_MAX_AGE_MS, shouldReloadSnapshot, versionKey } from '../lib/apoioPolling';
+import { loadApoioData, saveApoioGroup, deleteApoioGroup, saveApoioFleet, deleteApoioFleet, syncApoio } from '../lib/apoioService';
+import { isNavigatorOnline, isPageVisible } from '../lib/egressCachePolicy';
 import { exportApoioPDF, exportApoioExcel } from '../lib/apoioReport';
 import { exportApoioImages, APOIO_IMAGE_FORMATS, type ApoioImageFormat, type ApoioImageQuality } from '../lib/apoioImageReport';
-import { exportOficinaTerceirosImages } from '../lib/apoioOficinaTerceirosReport';
+import { exportOficinaTerceirosExcel, exportOficinaTerceirosImages } from '../lib/apoioOficinaTerceirosReport';
 import {
+  OFICINA_REPORT_FORMATS,
+  OFICINA_REPORT_QUALITIES,
   OFICINA_TERCEIROS_IMAGE,
   filterOficinaTerceirosEntries,
+  oficinaReportTitle,
+  oficinaScopeLabel,
   oficinaTerceirosProviderOptions,
   oficinaTerceirosSummary,
-  selectOficinaTerceirosEquipment,
+  readStoredOficinaFormat,
+  readStoredOficinaQuality,
+  readStoredOficinaScope,
+  resolveOficinaRenderDimensions,
+  saveStoredOficinaFormat,
+  saveStoredOficinaQuality,
+  saveStoredOficinaScope,
+  selectOficinaReportEquipment,
+  selectOficinaReportOrders,
+  type OficinaReportFormat,
+  type OficinaReportQuality,
+  type OficinaTerceirosScope,
 } from '../lib/apoioOficinaTerceirosData';
 import { ApoioData, ApoioFleet, ApoioGroup, ApoioReportOptions, ApoioReportRow, diasEmAberto, diasObservados, oficinaLabel } from '../types/apoio';
 import { apoioBaseRows, apoioOrderStatusLabel, filterApoioRows, reconcileApoioFleetSelection } from '../lib/apoioFilters';
@@ -87,6 +102,9 @@ export default function ControleApoio() {
   const [showWhatsApp, setShowWhatsApp] = useState(false);
   const [imageFormat, setImageFormat] = useState<ApoioImageFormat>('celular');
   const [imageQuality, setImageQuality] = useState<ApoioImageQuality>('ultra');
+  const [oficinaScope, setOficinaScope] = useState<OficinaTerceirosScope>(readStoredOficinaScope);
+  const [oficinaFormat, setOficinaFormat] = useState<OficinaReportFormat>(readStoredOficinaFormat);
+  const [oficinaQuality, setOficinaQuality] = useState<OficinaReportQuality>(readStoredOficinaQuality);
   const [oficinaQuery, setOficinaQuery] = useState('');
   const [oficinaPrestadores, setOficinaPrestadores] = useState<string[]>([]);
   const [oficinaDesmarcados, setOficinaDesmarcados] = useState<string[]>([]);
@@ -95,30 +113,36 @@ export default function ControleApoio() {
   const [fleetDraft, setFleetDraft] = useState({ frotas: '', grupo_id: '', nome: '' });
   const mounted = useRef(true);
   const reading = useRef(false);
-  const versionRef = useRef<string | null>(null);
-  const loadedAtRef = useRef<number | null>(null);
-  const checkingVersion = useRef(false);
+  const lastAttemptAt = useRef(0);
 
   useEffect(() => {
     try { window.localStorage.setItem(DISPLAY_MODE_STORAGE_KEY, displayMode); } catch { /* preferência opcional */ }
   }, [displayMode]);
 
-  const refresh = useCallback(async (consultSource = true) => {
+  useEffect(() => {
+    saveStoredOficinaScope(oficinaScope);
+  }, [oficinaScope]);
+
+  useEffect(() => {
+    saveStoredOficinaFormat(oficinaFormat);
+  }, [oficinaFormat]);
+
+  useEffect(() => {
+    saveStoredOficinaQuality(oficinaQuality);
+  }, [oficinaQuality]);
+
+  const refresh = useCallback(async (consultSource = false, forceRead = false) => {
     if (reading.current) return;
     reading.current = true;
+    lastAttemptAt.current = Date.now();
     setRefreshing(true);
     let syncError = '';
     try {
       if (consultSource) {
-        try { await syncApoio(); } catch (err) { syncError = msg(err); }
+        try { await syncApoio({ force: forceRead }); } catch (err) { syncError = msg(err); }
       }
-      const next = await loadApoioData();
-      if (mounted.current) {
-        setData(next);
-        setError(syncError);
-        versionRef.current = versionKey(next.sync?.fonte_atualizada ?? null);
-        loadedAtRef.current = Date.now();
-      }
+      const next = await loadApoioData({ force: forceRead });
+      if (mounted.current) { setData(next); setError(syncError); }
     } catch (err) {
       if (mounted.current) setError(msg(err));
     } finally {
@@ -127,42 +151,25 @@ export default function ControleApoio() {
     }
   }, []);
 
-  /**
-   * Consulta só a versão (~100 bytes) e baixa a fotografia completa apenas
-   * quando a planilha mudou ou a última leitura envelheceu. Antes, cada tela
-   * aberta baixava 2,46 MB por minuto e ainda disparava uma sincronização.
-   */
-  const checkVersion = useCallback(async () => {
-    if (reading.current || checkingVersion.current) return;
-    checkingVersion.current = true;
-    try {
-      const version = await loadApoioVersion();
-      if (!mounted.current || version.erro) return;
-      if (shouldReloadSnapshot(
-        { version: versionRef.current, loadedAt: loadedAtRef.current },
-        version.fonteAtualizada,
-        Date.now(),
-        APOIO_SNAPSHOT_MAX_AGE_MS,
-      )) await refresh(false);
-    } catch {
-      /* A próxima verificação tenta de novo; a tela continua com os dados atuais. */
-    } finally {
-      checkingVersion.current = false;
-    }
-  }, [refresh]);
-
   useEffect(() => {
     mounted.current = true;
-    void refresh();
-    const timer = window.setInterval(() => { void checkVersion(); }, 60_000);
-    const handleGlobalRefresh = () => { void refresh(); };
+    void refresh(false, false);
+    const maybeAutoRefresh = () => {
+      if (!isPageVisible() || !isNavigatorOnline() || reading.current) return;
+      if (Date.now() - lastAttemptAt.current < 60_000) return;
+      void refresh(false, false);
+    };
+    const timer = window.setInterval(maybeAutoRefresh, 3 * 60_000);
+    const handleGlobalRefresh = () => { void refresh(true, true); };
     window.addEventListener('bp:apoio-refresh', handleGlobalRefresh);
+    document.addEventListener('visibilitychange', maybeAutoRefresh);
     return () => {
       mounted.current = false;
       window.clearInterval(timer);
       window.removeEventListener('bp:apoio-refresh', handleGlobalRefresh);
+      document.removeEventListener('visibilitychange', maybeAutoRefresh);
     };
-  }, [checkVersion, refresh]);
+  }, [refresh]);
 
   useEffect(() => {
     if (!data) return;
@@ -223,7 +230,14 @@ export default function ControleApoio() {
   ];
   }, [fleetsByGroup, groupMap, groupsFilter, origins, providersFilter, query, statuses, view, recencyLabel]);
   const filtersExcel = reportFilters;
-  const oficinaTerceirosEntries = useMemo(() => selectOficinaTerceirosEquipment(rows), [rows]);
+  const oficinaExternaEntries = useMemo(() => selectOficinaReportEquipment(rows, 'externa'), [rows]);
+  const oficinaEmergenciaEntries = useMemo(() => selectOficinaReportEquipment(rows, 'emergencia'), [rows]);
+  const oficinaJuntosEntries = useMemo(() => selectOficinaReportEquipment(rows, 'juntos'), [rows]);
+  const oficinaTerceirosEntries = useMemo(() => {
+    if (oficinaScope === 'emergencia') return oficinaEmergenciaEntries;
+    if (oficinaScope === 'juntos') return oficinaJuntosEntries;
+    return oficinaExternaEntries;
+  }, [oficinaEmergenciaEntries, oficinaExternaEntries, oficinaJuntosEntries, oficinaScope]);
   const oficinaTerceirosProviders = useMemo(() => oficinaTerceirosProviderOptions(oficinaTerceirosEntries), [oficinaTerceirosEntries]);
   const oficinaTerceirosFiltered = useMemo(
     () => filterOficinaTerceirosEntries(oficinaTerceirosEntries, { query: oficinaQuery, prestadores: oficinaPrestadores }),
@@ -235,6 +249,14 @@ export default function ControleApoio() {
     [oficinaTerceirosFiltered, oficinaDesmarcados],
   );
   const oficinaTerceirosOcultos = oficinaTerceirosFiltered.length - oficinaTerceirosSelecionadas.length;
+  const oficinaScopedOrders = useMemo(
+    () => selectOficinaReportOrders(rows, oficinaScope, {
+      query: oficinaQuery,
+      prestadores: oficinaPrestadores,
+      excludedFleets: oficinaDesmarcados,
+    }),
+    [rows, oficinaScope, oficinaQuery, oficinaPrestadores, oficinaDesmarcados],
+  );
   const oficinaTerceirosColors = useMemo(
     () => Object.fromEntries((data?.groups || []).map(group => [group.nome, group.cor])) as Record<string, string>,
     [data?.groups],
@@ -252,7 +274,7 @@ export default function ControleApoio() {
 
   const runMutation = async (action: () => Promise<void>, success: string) => {
     setBusy(true); setError(''); setNotice('');
-    try { await action(); setNotice(success); await refresh(false); }
+    try { await action(); setNotice(success); await refresh(false, true); }
     catch (err) { setError(msg(err)); }
     finally { setBusy(false); }
   };
@@ -279,7 +301,7 @@ export default function ControleApoio() {
           await saveApoioFleet({ frota, grupo_id: fleetDraft.grupo_id, nome: fleetDraft.nome.trim() }); saved++;
         }
       } catch (err) {
-        await refresh(false);
+        await refresh(false, true);
         throw new Error(`${saved} de ${frotas.length} frotas salvas. ${msg(err)}`);
       }
       setFleetDraft(draft => ({ ...draft, frotas: '', nome: '' }));
@@ -306,18 +328,55 @@ export default function ControleApoio() {
     finally { setExporting(false); setExportProgress(''); }
   };
 
-  /** Relatório separado: frota, modelo e oficina de terceiro, em PNG 921 × 1600. */
-  const exportOficinaTerceiros = async () => {
+  /** Exportações (PNG, Excel e PDF) do relatório de Oficina de Terceiros / Emergenciais respeitando separado/junto. */
+  const exportOficinaTerceiros = async (format: 'png' | 'xlsx' | 'pdf' = 'png') => {
     setExporting(true); setError(''); setNotice(''); setExportProgress('Preparando relatório…');
     try {
       const entries = oficinaTerceirosFiltered.filter(entry => !oficinaDesmarcados.includes(entry.frota));
       if (!entries.length) throw new Error('Marque pelo menos um equipamento para gerar o relatório.');
-      const result = await exportOficinaTerceirosImages(entries, { groupColors: oficinaTerceirosColors }, progress => {
-        setExportProgress(`${progress.phase}${progress.total ? ` · ${progress.current}/${progress.total}` : '…'}`);
-      });
-      setNotice(`Equipamentos em Oficina de Terceiros: imagem PNG ${result.width} × ${result.height} baixada com ${result.count} ${result.count === 1 ? 'equipamento' : 'equipamentos'}.`);
+      if (format === 'xlsx') {
+        const result = await exportOficinaTerceirosExcel(entries, oficinaScopedOrders, {
+          groupColors: oficinaTerceirosColors,
+          scope: oficinaScope,
+          query: oficinaQuery,
+          prestadores: oficinaPrestadores,
+        });
+        setNotice(`${oficinaReportTitle(oficinaScope)}: planilha Excel exportada com ${result.count} ${result.count === 1 ? 'equipamento' : 'equipamentos'} (${result.orderCount} ${result.orderCount === 1 ? 'ordem' : 'ordens'}).`);
+      } else if (format === 'pdf') {
+        if (!oficinaScopedOrders.length) throw new Error('Nenhuma ordem vinculada aos equipamentos marcados.');
+        await exportApoioPDF({
+          ...exportOptions,
+          rows: oficinaScopedOrders,
+          reportTitle: oficinaReportTitle(oficinaScope),
+          view: oficinaReportTitle(oficinaScope),
+          filters: [...reportFilters, `Modo do relatório: ${oficinaScopeLabel(oficinaScope)}`],
+          filtersExcel: [...filtersExcel, `Modo do relatório: ${oficinaScopeLabel(oficinaScope)}`],
+        });
+        setNotice(`${oficinaReportTitle(oficinaScope)}: PDF exportado com ${entries.length} ${entries.length === 1 ? 'equipamento' : 'equipamentos'} (${oficinaScopedOrders.length} ${oficinaScopedOrders.length === 1 ? 'ordem' : 'ordens'}).`);
+      } else {
+        const result = await exportOficinaTerceirosImages(
+          entries,
+          {
+            groupColors: oficinaTerceirosColors,
+            scope: oficinaScope,
+            format: oficinaFormat,
+            quality: oficinaQuality,
+          },
+          progress => {
+            setExportProgress(`${progress.phase}${progress.total ? ` · ${progress.current}/${progress.total}` : '…'}`);
+          },
+        );
+        const fmtLabel = OFICINA_REPORT_FORMATS[result.format].shortLabel;
+        const qualLabel = OFICINA_REPORT_QUALITIES[result.quality].shortLabel;
+        setNotice(`${oficinaReportTitle(oficinaScope)}: imagem PNG ${result.width} × ${result.height} (${fmtLabel} · ${qualLabel}) baixada com ${result.count} ${result.count === 1 ? 'equipamento' : 'equipamentos'}.`);
+      }
     } catch (err) { setError(msg(err)); }
     finally { setExporting(false); setExportProgress(''); }
+  };
+  const changeOficinaScope = (next: OficinaTerceirosScope) => {
+    setOficinaScope(next);
+    saveStoredOficinaScope(next);
+    setOficinaPrestadores([]);
   };
   const toggleOficinaEquipamento = (frota: string) => {
     setOficinaDesmarcados(current => current.includes(frota) ? current.filter(item => item !== frota) : [...current, frota]);
@@ -343,7 +402,7 @@ export default function ControleApoio() {
         </div>
         <div className="mt-hero-actions">
           <span className="mt-source-tag"><Wrench size={17} aria-hidden="true" />Ordens da Gestão de Manutenção</span>
-          <button type="button" className="mt-btn mt-btn-primary" disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={17} aria-hidden="true" className={refreshing ? 'animate-spin' : ''} />{refreshing ? 'Atualizando…' : 'Atualizar ordens'}</button>
+          <button type="button" className="mt-btn mt-btn-primary" disabled={refreshing} onClick={() => void refresh(true, true)}><RefreshCw size={17} aria-hidden="true" className={refreshing ? 'animate-spin' : ''} />{refreshing ? 'Atualizando…' : 'Atualizar ordens'}</button>
         </div>
       </section>
       <div className="mt-source-line">
@@ -387,7 +446,7 @@ export default function ControleApoio() {
               <div className="flex gap-2"><button type="submit" className={buttonClass} style={green} disabled={busy}><Save size={16} />{groupDraft.id ? 'Salvar alterações' : 'Criar grupo'}</button>{groupDraft.id && <button type="button" className={buttonClass} style={neutral} onClick={() => setGroupDraft({ id: '', nome: '', cor: '#20a876' })}>Cancelar</button>}</div>
             </form>
             <div className="space-y-2 mt-5">
-              {data.groups.map(group => <div key={group.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--bg-hover)' }}><span className="w-3 h-3 rounded-full shrink-0" style={{ background: group.cor }} /><div className="flex-1"><strong className="text-sm">{group.nome}</strong><p className="text-xs" style={muted}>{data.fleets.filter(f => f.grupo_id === group.id).length} frotas cadastradas</p></div><button className="text-xs px-2 py-1" disabled={busy} onClick={() => setGroupDraft(group)}>Editar</button><button aria-label={`Excluir ${group.nome}`} disabled={busy || data.fleets.some(f => f.grupo_id === group.id)} title="Só é possível excluir grupos sem frotas" onClick={() => { if (window.confirm(`Excluir o grupo ${group.nome}?`)) void runMutation(() => deleteApoioGroup(group.id), 'Grupo excluído.'); }} className="disabled:opacity-30"><Trash2 size={16} /></button></div>)}
+              {data.groups.map(group => <div key={group.id} className="apoio-group-card flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--bg-hover)' }}><span className="w-3 h-3 rounded-full shrink-0" style={{ background: group.cor }} /><div className="flex-1 min-w-0"><strong className="apoio-group-card__name text-sm block truncate">{group.nome}</strong><p className="text-xs" style={muted}>{data.fleets.filter(f => f.grupo_id === group.id).length} frotas cadastradas</p></div><button className="apoio-group-card__edit text-xs px-2.5 py-1.5 rounded-lg" disabled={busy} onClick={() => setGroupDraft(group)}>Editar</button><button aria-label={`Excluir ${group.nome}`} disabled={busy || data.fleets.some(f => f.grupo_id === group.id)} title="Só é possível excluir grupos sem frotas" onClick={() => { if (window.confirm(`Excluir o grupo ${group.nome}?`)) void runMutation(() => deleteApoioGroup(group.id), 'Grupo excluído.'); }} className="disabled:opacity-30 p-1.5"><Trash2 size={16} /></button></div>)}
               {!data.groups.length && <p className="text-sm" style={muted}>Nenhum grupo cadastrado. Crie o primeiro grupo acima.</p>}
             </div>
           </section>
@@ -488,23 +547,93 @@ export default function ControleApoio() {
               <div className="apoio-view-toggle" role="group" aria-label="Visualização dos resultados"><button type="button" aria-pressed={displayMode === 'cards'} onClick={() => setDisplayMode('cards')}>Cartões</button><button type="button" aria-pressed={displayMode === 'table'} onClick={() => setDisplayMode('table')}>Tabela</button></div>
               <button type="button" className="mt-btn" disabled={!rows.length || exporting} onClick={() => void exportReport('pdf')}><FileText size={17} aria-hidden="true" />Relatório PDF</button>
               <button type="button" className="mt-btn" disabled={!rows.length || exporting} onClick={() => void exportReport('xlsx')}><Download size={17} aria-hidden="true" />Excel</button>
-              <button type="button" className="mt-btn" disabled={!oficinaTerceirosSelecionadas.length || exporting} title="Relatório separado em PNG: frota, modelo e oficina de terceiro" onClick={() => void exportOficinaTerceiros()}><Building2 size={17} aria-hidden="true" />Oficina de terceiros</button>
+              <button type="button" className="mt-btn" disabled={!oficinaTerceirosSelecionadas.length || exporting} title="Relatório em PNG conforme modo escolhido: oficina externa, emergenciais ou juntos" onClick={() => void exportOficinaTerceiros('png')}><Building2 size={17} aria-hidden="true" />{oficinaScope === 'externa' ? 'Oficina de terceiros' : oficinaScope === 'emergencia' ? 'Emergenciais · Interna/Campo' : 'Terceiros + Emergenciais'}</button>
             </div>
           </div>
           <p className="mt-history-summary" aria-live="polite">{recencyLabel}</p>
           <details className="mt-filters apoio-image-reports" open>
-            <summary><span className="apoio-filter-title"><Download size={18} aria-hidden="true" />Relatórios em imagem</span><span>{oficinaTerceirosSelecionadas.length} de {oficinaTerceirosEntries.length} equipamentos em oficina de terceiros · PNG {OFICINA_TERCEIROS_IMAGE.width} px de largura</span></summary>
+            <summary><span className="apoio-filter-title"><Download size={18} aria-hidden="true" />Relatórios em imagem</span><span>{oficinaTerceirosSelecionadas.length} de {oficinaTerceirosEntries.length} equipamentos ({oficinaScope === 'externa' ? 'oficina de terceiros' : oficinaScope === 'emergencia' ? 'emergenciais interna/campo' : 'terceiros + emergenciais'}) · {OFICINA_REPORT_FORMATS[oficinaFormat].shortLabel} ({OFICINA_REPORT_QUALITIES[oficinaQuality].shortLabel})</span></summary>
             <div className="mt-filter-body apoio-command-content apoio-image-reports-body">
               <div className="grid lg:grid-cols-2 gap-4">
                 <section className="p-4 space-y-3" style={panel} aria-label="Equipamentos em Oficina de Terceiros">
-                  <div className="apoio-panel-heading"><h3>Equipamentos em Oficina de Terceiros</h3><span className="text-xs" style={muted}>somente frota, modelo e oficina</span></div>
-                  <p className="text-xs" style={muted}>Marque só quem você quer cobrar: o PNG sai direto, em uma imagem única, com 921 px de largura e 1600 px de altura (cresce se precisar). A lista de ordens abaixo não muda.</p>
-                  <label className="block text-xs font-semibold" htmlFor="apoio-relatorio-oficina-busca">Pesquisar equipamento ou oficina
-                    <input id="apoio-relatorio-oficina-busca" className="mt-1" style={field} value={oficinaQuery} onChange={event => setOficinaQuery(event.target.value)} placeholder="Ex.: 4508, MB 3344 ou Fratini" autoComplete="off" />
+                  <div className="apoio-panel-heading"><h3>{oficinaReportTitle(oficinaScope)}</h3><span className="text-xs" style={muted}>frota, modelo e oficina/local</span></div>
+                  <p className="text-xs" style={muted}>Escolha se deseja visualizar e cobrar <strong>separado</strong> (só Oficina de Terceiros ou só Emergenciais na Oficina Interna/Campo) ou <strong>junto</strong> no mesmo PNG para Celular, Tablet ou Computador.</p>
+                  <div className="apoio-report-scope-group" role="group" aria-label="Modo de cobrança e visualização">
+                    <button
+                      type="button"
+                      className={`apoio-report-scope-btn${oficinaScope === 'externa' ? ' is-active' : ''}`}
+                      aria-pressed={oficinaScope === 'externa'}
+                      onClick={() => changeOficinaScope('externa')}
+                    >
+                      Separado · Oficina de terceiros ({oficinaExternaEntries.length})
+                    </button>
+                    <button
+                      type="button"
+                      className={`apoio-report-scope-btn${oficinaScope === 'emergencia' ? ' is-active' : ''}`}
+                      aria-pressed={oficinaScope === 'emergencia'}
+                      onClick={() => changeOficinaScope('emergencia')}
+                    >
+                      Separado · Emergenciais Interna/Campo ({oficinaEmergenciaEntries.length})
+                    </button>
+                    <button
+                      type="button"
+                      className={`apoio-report-scope-btn${oficinaScope === 'juntos' ? ' is-active' : ''}`}
+                      aria-pressed={oficinaScope === 'juntos'}
+                      onClick={() => changeOficinaScope('juntos')}
+                    >
+                      Junto · Terceiros + Emergenciais ({oficinaJuntosEntries.length})
+                    </button>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3 items-end">
+                    <div>
+                      <span className="block text-xs font-semibold mb-1.5">Modo / dispositivo do PNG</span>
+                      <div className="apoio-report-scope-group" role="group" aria-label="Formato de tela do relatório de oficina">
+                        {(['celular', 'tablet', 'computador'] as const).map(fmtKey => (
+                          <button
+                            key={fmtKey}
+                            type="button"
+                            disabled={exporting}
+                            className={`apoio-report-scope-btn${oficinaFormat === fmtKey ? ' is-active' : ''}`}
+                            aria-pressed={oficinaFormat === fmtKey}
+                            onClick={() => setOficinaFormat(fmtKey)}
+                          >
+                            {OFICINA_REPORT_FORMATS[fmtKey].shortLabel}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <label className="block text-xs font-semibold" htmlFor="apoio-oficina-qualidade">
+                      Qualidade da imagem
+                      <select
+                        id="apoio-oficina-qualidade"
+                        className="mt-1"
+                        style={field}
+                        disabled={exporting}
+                        value={oficinaQuality}
+                        onChange={event => setOficinaQuality(event.target.value as OficinaReportQuality)}
+                      >
+                        {(Object.entries(OFICINA_REPORT_QUALITIES) as Array<[OficinaReportQuality, { label: string }]>).map(([qKey, qInfo]) => (
+                          <option key={qKey} value={qKey}>{qInfo.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  {(() => {
+                    const previewDims = resolveOficinaRenderDimensions(oficinaFormat, oficinaQuality);
+                    return (
+                      <p className="text-xs" style={muted}>
+                        Saída mínima: <strong>{previewDims.pixelWidth} × {previewDims.pixelHeight} px</strong> ({OFICINA_REPORT_FORMATS[oficinaFormat].label} · escala {previewDims.scale}×). Base mínima: {OFICINA_TERCEIROS_IMAGE.width} px no celular.
+                      </p>
+                    );
+                  })()}
+                  <label className="block text-xs font-semibold" htmlFor="apoio-relatorio-oficina-busca">Pesquisar equipamento, oficina ou local
+                    <input id="apoio-relatorio-oficina-busca" className="mt-1" style={field} value={oficinaQuery} onChange={event => setOficinaQuery(event.target.value)} placeholder="Ex.: 4508, Fratini, Interna ou Campo" autoComplete="off" />
                   </label>
-                  <ApoioMultiSelect label="Oficina de terceiro" options={oficinaTerceirosProviders} value={oficinaPrestadores} onChange={setOficinaPrestadores} description="múltipla" />
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button type="button" className={buttonClass} style={green} disabled={!oficinaTerceirosSelecionadas.length || exporting} onClick={() => void exportOficinaTerceiros()}><Download size={16} aria-hidden="true" />{exporting ? 'Gerando…' : 'Baixar imagem PNG'}</button>
+                  <ApoioMultiSelect label={oficinaScope === 'externa' ? 'Oficina de terceiro' : 'Oficina ou local'} options={oficinaTerceirosProviders} value={oficinaPrestadores} onChange={setOficinaPrestadores} description="múltipla" />
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button type="button" className={buttonClass} style={green} disabled={!oficinaTerceirosSelecionadas.length || exporting} onClick={() => void exportOficinaTerceiros('png')}><Download size={16} aria-hidden="true" />{exporting ? 'Gerando…' : `Baixar PNG (${OFICINA_REPORT_FORMATS[oficinaFormat].shortLabel})`}</button>
+                    <button type="button" className={buttonClass} style={neutral} disabled={!oficinaTerceirosSelecionadas.length || exporting} onClick={() => void exportOficinaTerceiros('xlsx')}><Download size={16} aria-hidden="true" />Exportar Excel</button>
+                    <button type="button" className={buttonClass} style={neutral} disabled={!oficinaScopedOrders.length || exporting} onClick={() => void exportOficinaTerceiros('pdf')}><FileText size={16} aria-hidden="true" />Exportar PDF</button>
                     <button type="button" className={buttonClass} style={neutral} disabled={!oficinaQuery.trim() && !oficinaPrestadores.length} onClick={() => { setOficinaQuery(''); setOficinaPrestadores([]); }}>Limpar filtros do relatório</button>
                     <span className="text-xs" style={muted} aria-live="polite">{oficinaTerceirosSelecionadas.length} de {oficinaTerceirosFiltered.length} marcados</span>
                   </div>
@@ -516,14 +645,21 @@ export default function ControleApoio() {
                   <div className="apoio-image-preview" role="group" aria-label="Equipamentos que sairão no relatório">
                     {oficinaTerceirosFiltered.map(entry => {
                       const marcado = !oficinaDesmarcados.includes(entry.frota);
+                      const isEmergencyEntry = entry.categoria === 'emergencial_interna' || entry.categoria === 'emergencial_campo';
                       return (
                         <label className={`apoio-image-preview-row${marcado ? ' is-marked' : ' is-unmarked'}`} key={entry.frota}>
                           <input type="checkbox" checked={marcado} onChange={() => toggleOficinaEquipamento(entry.frota)} aria-label={`Incluir frota ${entry.frota} no relatório`} />
-                          <span className="apoio-image-preview-text"><strong>{entry.frota}</strong><span>{entry.modelo}</span><small>{entry.prestador}</small></span>
+                          <span className="apoio-image-preview-text">
+                            <strong>{entry.frota}</strong>
+                            <span>{entry.modelo}</span>
+                            <small className={isEmergencyEntry ? 'apoio-preview-emergency' : undefined}>
+                              {entry.prestador}
+                            </small>
+                          </span>
                         </label>
                       );
                     })}
-                    {!oficinaTerceirosFiltered.length && <p className="text-xs" style={muted}>Nenhum equipamento com esses filtros. Ajuste a busca ou a oficina para voltar a ter registros no relatório.</p>}
+                    {!oficinaTerceirosFiltered.length && <p className="text-xs" style={muted}>{oficinaScope === 'emergencia' ? 'Nenhum equipamento emergencial ativo em Oficina Interna ou Campo com os filtros atuais.' : 'Nenhum equipamento com esses filtros. Ajuste a busca, o modo ou a oficina para voltar a ter registros no relatório.'}</p>}
                   </div>
                 </section>
                 <section className="p-4 space-y-3" style={panel} aria-label="Imagem premium">
@@ -571,13 +707,13 @@ export default function ControleApoio() {
           <span>Última consulta: {fmt(data?.sync?.consultado_em)}</span>
           <span>Sincronização válida: {fmt(data?.sync?.sincronizado_em)}</span>
         </div>
-        <p className="apoio-sync-note">Consulta automática a cada 1 minuto. Uma nova consulta não significa que a fonte já publicou novos dados.</p>
+        <p className="apoio-sync-note">Modo econômico: atualização automática a cada 3 minutos com a tela visível e leitura condicional do snapshot.</p>
       <div className="apoio-actions" aria-label="Atualização e relatórios">
         <button className={buttonClass} style={green} disabled={!rows.length || exporting} onClick={() => void exportReport('pdf')}><FileText size={16} />{exporting ? 'Gerando…' : 'Relatório premium'}</button>
         <button className={buttonClass} style={neutral} disabled={!rows.length || exporting} onClick={() => void exportReport('xlsx')}><Download size={16} />Excel</button>
         <button className={buttonClass} style={showWhatsApp ? green : neutral} disabled={!rows.length} aria-expanded={showWhatsApp} onClick={() => setShowWhatsApp(value => !value)}><MessageSquare size={16} />WhatsApp · Cobrar retorno</button>
       </div>
-      <p className="text-xs" style={muted}>Imagens e relatórios de oficina de terceiros ficam no painel <strong>Relatórios em imagem</strong>, acima da lista de ordens. {oficinaTerceirosEntries.length ? `${oficinaTerceirosSummary(oficinaTerceirosEntries)} nesta seleção.` : 'Nenhum equipamento em oficina externa na seleção atual.'}</p>
+      <p className="text-xs" style={muted}>Imagens e relatórios de oficina de terceiros ficam no painel <strong>Relatórios em imagem</strong>, acima da lista de ordens. {oficinaTerceirosEntries.length ? `${oficinaTerceirosSummary(oficinaTerceirosEntries, oficinaScope)} nesta seleção.` : oficinaScope === 'emergencia' ? 'Nenhum equipamento emergencial em Oficina Interna ou Campo na seleção atual.' : oficinaScope === 'juntos' ? 'Nenhum equipamento em oficina externa ou emergencial (Interna/Campo) na seleção atual.' : 'Nenhum equipamento em oficina externa na seleção atual.'}</p>
 
       {showWhatsApp && <ApoioWhatsAppPanel options={exportOptions} disabled={exporting} onBusyChange={setExporting} />}
 

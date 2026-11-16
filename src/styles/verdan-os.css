@@ -112,6 +112,8 @@ html.theme-verdan .app-shell {
 
 /* Override forced ivory backgrounds on main containers inside theme-verdan */
 html.theme-verdan .app-shell--lub > div > main,
+html.theme-verdan .app-shell--apoio > div > main,
+html.theme-verdan .app-shell--apoio-reference > div > main,
 html.theme-verdan .app-shell > div > main {
   background: transparent !important;
   background-image: none !important;
@@ -607,6 +609,22 @@ html.theme-verdan .lavagem-premium > .lavagem-premium-body {
   color: #eef6ec !important;
 }
 
+html.theme-verdan .lavagem-premium .lavagem-perf-soft-warning {
+  background: rgba(251, 191, 36, 0.14) !important;
+  border: 1px solid rgba(251, 191, 36, 0.34) !important;
+  color: #fde68a !important;
+}
+
+html.theme-verdan .lavagem-premium .lavagem-perf-soft-warning__icon {
+  color: #fbbf24 !important;
+}
+
+html.theme-verdan .lavagem-premium .lavagem-perf-soft-warning__close {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(251, 191, 36, 0.34) !important;
+  color: #fde68a !important;
+}
+
 /* ── Glass Pill Navigation Tabs ───────────────────────────────────────────── */
 html.theme-verdan .lavagem-premium .lavagem-premium-tabs {
   background: rgba(10, 20, 14, 0.72) !important;
@@ -669,15 +687,15 @@ html.theme-verdan .lavagem-premium .lub-module .lub-filter-panel,
 html.theme-verdan .lavagem-premium .lub-module .lub-table-panel,
 html.theme-verdan .lavagem-premium .dashboard-panel,
 html.theme-verdan .lavagem-premium .dashboard-kpi {
-  background: rgba(11, 22, 15, 0.72) !important;
+  background: rgba(11, 22, 15, 0.66) !important;
   border: 1px solid rgba(208, 236, 182, 0.13) !important;
   border-radius: 20px !important;
   color: #eef6ec !important;
   box-shadow:
     0 20px 46px -22px rgba(0, 0, 0, 0.8),
     inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-  backdrop-filter: blur(22px) saturate(140%) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(140%) !important;
+  backdrop-filter: blur(16px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(140%) !important;
   transition:
     transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
     border-color 220ms ease,
@@ -1276,6 +1294,11 @@ html.theme-verdan .app-shell .maintenance-tracking :is(.mt-kpi strong, .apoio-kp
   font-variant-numeric: tabular-nums !important;
 }
 
+/* Override low-contrast #0b321f base rule from maintenance-premium.css without beating specific accents */
+html.theme-verdan .app-shell .maintenance-tracking :where(h2, h3, h4, strong, dt, label) {
+  color: #f2f7f0 !important;
+}
+
 /* Hero & Source Strip */
 html.theme-verdan .app-shell .maintenance-tracking {
   padding-inline: 0 !important;
@@ -1384,7 +1407,7 @@ html.theme-verdan .app-shell .maintenance-tracking :is(.mt-btn, .apoio-button, .
   transition: background 180ms ease, border-color 180ms ease, transform 180ms ease !important;
 }
 
-html.theme-verdan .app-shell .maintenance-tracking :is(.mt-btn, .apoio-button, .apoio-image-picker-action, .apoio-direct-clear):hover:not(:disabled) {
+html.theme-verdan .app-shell .maintenance-tracking :is(.mt-btn, .apoio-button, .apoio-image-picker-action, .apoio-direct-clear):not(.mt-btn-primary):not([aria-pressed="true"]):not([style*="--brand-green"]):hover:not(:disabled) {
   background: rgba(26, 48, 34, 0.94) !important;
   border-color: rgba(183, 237, 64, 0.42) !important;
   color: #ffffff !important;
@@ -1398,6 +1421,13 @@ html.theme-verdan .app-shell .maintenance-tracking :is(.mt-btn-primary, .apoio-b
   color: #07140b !important;
   font-weight: 800 !important;
   box-shadow: 0 10px 24px -10px rgba(183, 237, 64, 0.45) !important;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking :is(.mt-btn-primary, .apoio-button[aria-pressed="true"], .apoio-button[style*="--brand-green"]):hover:not(:disabled) {
+  background: linear-gradient(135deg, #d8fb7b 0%, #afe838 100%) !important;
+  border-color: rgba(242, 255, 196, 0.9) !important;
+  color: #07140b !important;
+  box-shadow: 0 12px 28px -10px rgba(183, 237, 64, 0.62) !important;
 }
 
 html.theme-verdan .app-shell .maintenance-tracking :is(.mt-btn-primary, .apoio-button[aria-pressed="true"], .apoio-button[style*="--brand-green"]) svg {
@@ -1620,6 +1650,92 @@ html.theme-verdan .app-shell .apoio-image-reports .apoio-image-preview-text span
 
 html.theme-verdan .app-shell .apoio-image-reports .apoio-image-preview-text small {
   color: #9fb7a4 !important;
+}
+
+html.theme-verdan .app-shell .apoio-image-reports .apoio-image-preview-text small.apoio-preview-emergency {
+  color: #fbbf24 !important;
+  font-weight: 700 !important;
+}
+
+html.theme-verdan .app-shell .apoio-image-reports .apoio-report-scope-btn {
+  background: rgba(16, 32, 22, 0.86) !important;
+  border: 1px solid rgba(208, 236, 182, 0.2) !important;
+  color: #e2efe0 !important;
+  border-radius: 10px !important;
+}
+
+html.theme-verdan .app-shell .apoio-image-reports .apoio-report-scope-btn:hover {
+  background: rgba(24, 46, 32, 0.96) !important;
+  border-color: rgba(183, 237, 64, 0.45) !important;
+  color: #ffffff !important;
+}
+
+html.theme-verdan .app-shell .apoio-image-reports .apoio-report-scope-btn.is-active {
+  background: linear-gradient(135deg, #ccf76a 0%, #9ee22b 100%) !important;
+  border-color: rgba(235, 255, 175, 0.75) !important;
+  color: #07140b !important;
+  font-weight: 800 !important;
+  box-shadow: 0 8px 20px -10px rgba(183, 237, 64, 0.5) !important;
+}
+
+/* Grupos Apoio e Cadastro de Frotas */
+html.theme-verdan .app-shell .maintenance-tracking .apoio-group-card {
+  background: rgba(12, 26, 17, 0.86) !important;
+  border: 1px solid rgba(208, 236, 182, 0.16) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking .apoio-group-card:hover {
+  border-color: rgba(183, 237, 64, 0.4) !important;
+  background: rgba(18, 36, 24, 0.92) !important;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking .apoio-group-card__name {
+  color: #f4f9f1 !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking .apoio-group-card__edit {
+  background: rgba(183, 237, 64, 0.14) !important;
+  border: 1px solid rgba(183, 237, 64, 0.36) !important;
+  color: #d9fc83 !important;
+  font-weight: 700 !important;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking .apoio-group-card__edit:hover:not(:disabled) {
+  background: rgba(183, 237, 64, 0.24) !important;
+  color: #ffffff !important;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking .apoio-group-card button[aria-label^="Excluir"] {
+  color: #9fb7a4 !important;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking .apoio-group-card button[aria-label^="Excluir"]:hover:not(:disabled) {
+  color: #f87171 !important;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking section.p-5 {
+  background: rgba(11, 22, 15, 0.82) !important;
+  border: 1px solid rgba(208, 236, 182, 0.16) !important;
+  border-radius: 18px !important;
+  color: #eef6ec !important;
+  backdrop-filter: blur(22px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(140%) !important;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking section.p-5 table th {
+  color: #b7ed40 !important;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking section.p-5 table td {
+  color: #eef6ec !important;
+}
+
+html.theme-verdan .app-shell .maintenance-tracking section.p-5 table td button:first-child {
+  color: #d9fc83 !important;
+  font-weight: 600 !important;
 }
 
 /* Order Cards (.mt-order) — Premium Legibility Overhaul */
@@ -2248,10 +2364,59 @@ html.theme-verdan .status-badge[data-status="ENCERRADO"] [data-status-dot] {
   background: #4ade80 !important;
 }
 
-/* Harmonize TV monitor font when theme-verdan is active */
+/* Harmonize TV monitor emerald glass background & typography when theme-verdan is active */
 html.theme-verdan .tv-monitor {
+  --tv-bg: #050d08;
+  --tv-panel: rgba(11, 23, 15, 0.72);
+  --tv-line: rgba(208, 236, 182, 0.16);
+  --tv-text: #f3f8f1;
+  --tv-muted: #9eb5a3;
+  --tv-green: #b7ed40;
+  --tv-red: #fca5a5;
   font-family: 'DM Sans', 'Plus Jakarta Sans', system-ui, sans-serif !important;
 }
+
+html.theme-verdan .tv-monitor[data-tv-theme="dark"]:not(.tv-monitor--presenting):not(:fullscreen) {
+  background:
+    radial-gradient(82% 85% at 90% 4%, rgba(183, 237, 64, 0.08) 0%, transparent 56%),
+    rgba(6, 17, 10, 0.2) !important;
+  border-color: rgba(208, 236, 182, 0.16) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.theme-verdan .tv-monitor.tv-monitor--presenting,
+html.theme-verdan .tv-monitor:fullscreen {
+  background:
+    radial-gradient(64% 52% at 24% 18%, rgba(44, 118, 56, 0.38) 0%, rgba(16, 48, 25, 0.14) 55%, transparent 100%),
+    radial-gradient(52% 48% at 78% 26%, rgba(183, 237, 64, 0.14) 0%, rgba(28, 72, 36, 0.12) 48%, transparent 100%),
+    radial-gradient(56% 50% at 52% 88%, rgba(30, 88, 45, 0.28) 0%, transparent 100%),
+    #050d08 !important;
+}
+
+html.theme-verdan .tv-monitor[data-tv-theme="dark"] :is(.tv-summary, .tv-board-tabs, .tv-order) {
+  background: rgba(10, 22, 14, 0.66) !important;
+  border-color: rgba(208, 236, 182, 0.15) !important;
+  backdrop-filter: blur(14px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(140%) !important;
+}
+
+html.theme-verdan .tv-monitor[data-tv-theme="dark"] .tv-board-tabs button[aria-pressed='true'] {
+  background: linear-gradient(135deg, #ccf76a 0%, #9ee22b 100%) !important;
+  border-color: rgba(235, 255, 175, 0.72) !important;
+  color: #07140b !important;
+}
+
+html.theme-verdan .tv-monitor[data-tv-theme="dark"] .tv-board-tabs button[aria-pressed='true'] b {
+  background: rgba(7, 20, 11, 0.16) !important;
+  color: #07140b !important;
+}
+
+html.theme-verdan .tv-monitor[data-tv-theme="dark"] .tv-brand img {
+  border-color: rgba(183, 237, 64, 0.58) !important;
+  background: radial-gradient(circle at 35% 30%, rgba(28, 68, 40, 0.92), rgba(7, 18, 11, 0.96)) !important;
+}
+
 html.theme-verdan .tv-monitor :is(h1, h2, h3, strong) {
   font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, sans-serif !important;
 }

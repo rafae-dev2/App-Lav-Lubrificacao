@@ -1,51 +1,52 @@
 /**
- * useSchedules.ts — Hook principal de dados com cache local
+ * useSchedules.ts — Hook principal de dados com cache local e modo econômico
  *
- * ESTRATÉGIA DE VELOCIDADE:
- * 1. Ao abrir o app: mostrar dados do cache local (localStorage) INSTANTANEAMENTE
- * 2. Em background: sincronizar com o snapshot Supabase e atualizar a UI
- * 3. Cache TTL: 5 minutos (somente como primeira pintura; o snapshot é fresco)
- * 4. Auto-refresh: a cada 15 segundos em background (sem bloquear a UI)
+ * ESTRATÉGIA DE VELOCIDADE E ECONOMIA (Free Tier Supabase):
+ * 1. Ao abrir o app: exibe cache local (localStorage) instantaneamente
+ * 2. Em background: usa marcador leve (~120 bytes) antes de baixar o snapshot
+ *    completo do RPC (~1,3 MB), só baixando quando há alteração real
+ * 3. Entre abas do mesmo navegador: BroadcastChannel sincroniza imediatamente
+ * 4. Auto-refresh adaptativo: 2 min em telas de Lavagem, 5 min em outros módulos,
+ *    pausado quando a aba está oculta ou offline
  * 5. Operações CRUD: atualização otimista; PCM edita somente campos premium via RPC
- *
- * ORDENAÇÃO:
- * - Dados são SEMPRE ordenados por rowIndex (ordem da planilha)
- * - Novos registros são inseridos na posição correta usando o rowIndex retornado
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Programacao, DashboardStats } from '../types';
 import {
   fetchSchedules,
+  fetchSchedulesWatermark,
   appendRowToSheet,
   deleteRowFromSheet,
   updateRowInSheet,
 } from '../lib/sheetsService';
 import { cleanScheduleObservation } from '../lib/schedulePresentation';
-import { supabase, LAVAGEM_TABLE } from '../lib/supabaseClient';
+import {
+  isAbortLikeError,
+  isRetryableScheduleError,
+  runScheduleFetchWithRetry,
+  SCHEDULE_ATTEMPT_TIMEOUT_MS,
+  shouldSkipAutoOrResumeSync,
+} from '../lib/scheduleSyncPolicy';
+import {
+  isNavigatorOnline,
+  isPageVisible,
+  resolveSchedulesAutoRefreshMs,
+  SCHEDULES_MAX_WATERMARK_AGE_MS,
+  SCHEDULES_RESUME_COOLDOWN_MS,
+  shouldRunInitialMountSync,
+} from '../lib/egressCachePolicy';
 import { nanoid } from 'nanoid';
 
 const CACHE_KEY      = 'bp_schedules_cache_v5';
 const CACHE_META_KEY = 'bp_schedules_cache_meta_v5';
 const LEGACY_CACHE_KEY = 'bp_schedules_cache_v4';
 const LEGACY_CACHE_META_KEY = 'bp_schedules_cache_meta_v4';
-const CACHE_TTL_MS   = 5 * 60 * 1000;  // 5 minutos
-// Atualização automática em segundo plano. Serve como "quase tempo real"
-// entre aparelhos MESMO sem o Realtime do Supabase ligado. Com o Realtime
-// ligado (recomendado), a atualização é instantânea e este intervalo vira
-// apenas uma rede de segurança.
-// A fotografia de programações tem ~1,3 MB. Antes eram 4 cargas por minuto por
-// tela aberta (240 por hora); agora o tempo real avisa e o intervalo é só a
-// rede de segurança. A atualização manual continua instantânea.
-const AUTO_REFRESH_MS = 5 * 60 * 1000; // 5 minutos
-/** Menor intervalo entre duas cargas disparadas por tempo real/foco. */
-const REALTIME_MIN_MS = 2 * 60 * 1000;
-const RESUME_MIN_MS = 60 * 1000;
+const CACHE_TTL_MS   = 10 * 60 * 1000;  // 10 minutos
+const SCHEDULES_BROADCAST_CHANNEL = 'bp_lavagem_schedules_v1';
 
 // Janela de proteção: por quanto tempo uma alteração local JÁ CONFIRMADA no
-// banco "vence" leituras do servidor que possam estar atrasadas. Isso é o que
-// impede o item de "voltar" ao estado anterior (PROGRAMADO/ATRASADO) alguns
-// segundos depois de clicar em Encerrar / Em andamento.
+// banco "vence" leituras do servidor que possam estar atrasadas.
 const PENDING_GRACE_MS = 6000;
 const DELETED_GRACE_MS = 6000;
 const PCM_READ_ONLY_MESSAGE = 'Registros PCM são somente leitura para exclusão nesta tela.';
@@ -66,6 +67,11 @@ type EditableField = typeof EDITABLE_FIELDS[number];
 interface CacheMeta {
   timestamp: number;
   count: number;
+  watermark?: string | null;
+}
+
+export interface UseSchedulesOptions {
+  activeLavagemPage?: boolean;
 }
 
 /** Ordena por rowIndex para manter a mesma ordem da planilha */
@@ -123,11 +129,6 @@ function changedEditableFields(
   return changes;
 }
 
-/**
- * Compara os campos "de negócio" de duas programações. Usado para saber se o
- * servidor JÁ reflete uma alteração local — quando reflete, deixamos de
- * proteger o item e passamos a confiar no servidor.
- */
 function sameState(a: Programacao, b: Programacao): boolean {
   return (
     a.situacao === b.situacao &&
@@ -150,13 +151,24 @@ function invalidateLegacyCache(): void {
   }
 }
 
+function readCacheMeta(): CacheMeta | null {
+  try {
+    const meta = localStorage.getItem(CACHE_META_KEY);
+    if (!meta) return null;
+    const parsed = JSON.parse(meta) as CacheMeta;
+    if (typeof parsed?.timestamp !== 'number') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function loadFromCache(): Programacao[] | null {
   try {
     invalidateLegacyCache();
-    const meta = localStorage.getItem(CACHE_META_KEY);
+    const meta = readCacheMeta();
     if (!meta) return null;
-    const { timestamp } = JSON.parse(meta) as CacheMeta;
-    if (Date.now() - timestamp > CACHE_TTL_MS) return null; // expirado
+    if (Date.now() - meta.timestamp > CACHE_TTL_MS) return null; // expirado
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     return sortBySheetOrder(JSON.parse(raw) as Programacao[]);
@@ -165,13 +177,31 @@ function loadFromCache(): Programacao[] | null {
   }
 }
 
-function saveToCache(data: Programacao[]): void {
+function saveToCache(data: Programacao[], watermark?: string | null): void {
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-    const meta: CacheMeta = { timestamp: Date.now(), count: data.length };
+    const existingWatermark = watermark === undefined ? readCacheMeta()?.watermark ?? null : watermark;
+    const meta: CacheMeta = {
+      timestamp: Date.now(),
+      count: data.length,
+      watermark: existingWatermark,
+    };
     localStorage.setItem(CACHE_META_KEY, JSON.stringify(meta));
   } catch {
     // localStorage pode estar cheio — ignorar
+  }
+}
+
+function touchCacheTimestamp(watermark: string | null): void {
+  try {
+    const meta = readCacheMeta();
+    if (!meta) return;
+    localStorage.setItem(
+      CACHE_META_KEY,
+      JSON.stringify({ ...meta, timestamp: Date.now(), watermark }),
+    );
+  } catch {
+    /* ignorar */
   }
 }
 
@@ -186,10 +216,9 @@ function clearCache(): void {
 
 function getCacheAge(): string | null {
   try {
-    const meta = localStorage.getItem(CACHE_META_KEY);
+    const meta = readCacheMeta();
     if (!meta) return null;
-    const { timestamp } = JSON.parse(meta) as CacheMeta;
-    const ageMs = Date.now() - timestamp;
+    const ageMs = Date.now() - meta.timestamp;
     if (ageMs < 60000) return 'há menos de 1 min';
     const mins = Math.floor(ageMs / 60000);
     return `há ${mins} min`;
@@ -198,93 +227,151 @@ function getCacheAge(): string | null {
   }
 }
 
-export function useSchedules() {
+export function useSchedules(options: UseSchedulesOptions = {}) {
+  const activeLavagemPage = options.activeLavagemPage ?? true;
+  const autoRefreshMs = resolveSchedulesAutoRefreshMs(activeLavagemPage);
+
   // Inicializar com dados do cache para exibição instantânea
   const [schedules, setSchedules]   = useState<Programacao[]>(() => loadFromCache() ?? []);
-  const [loading, setLoading]       = useState<boolean>(() => !loadFromCache()); // false se há cache
+  const [loading, setLoading]       = useState<boolean>(() => !loadFromCache());
   const [error, setError]           = useState<string | null>(null);
   const [lastSync, setLastSync]     = useState<string | null>(null);
   const [syncing, setSyncing]       = useState(false);
   const [fromCache, setFromCache]   = useState<boolean>(() => !!loadFromCache());
   const autoRefreshRef              = useRef<ReturnType<typeof setInterval> | null>(null);
-  const syncInProgressRef            = useRef<boolean>(false);
-  const queuedSyncRef = useRef<{silent:boolean;fresh:boolean} | null>(null);
-  const mountedRef = useRef(false);
-  const lifecycleRef = useRef(0);
-  const activeReadRef=useRef<AbortController | null>(null);
-  useEffect(()=>{
-    mountedRef.current=true;
-    lifecycleRef.current+=1;
-    return()=>{
-      mountedRef.current=false;
-      lifecycleRef.current+=1;
-      queuedSyncRef.current=null;
-      activeReadRef.current?.abort();
-      activeReadRef.current=null;
-      syncInProgressRef.current=false;
-    };
-  },[]);
+  const syncInProgressRef           = useRef<boolean>(false);
+  const queuedSyncRef               = useRef<{ silent: boolean; fresh: boolean; bypassWatermark: boolean } | null>(null);
+  const mountedRef                  = useRef(false);
+  const lifecycleRef                = useRef(0);
+  const activeReadRef               = useRef<AbortController | null>(null);
+  const lastAttemptAtRef            = useRef(0);
+  const lastSyncCompletedAtRef      = useRef(0);
+  const lastWatermarkRef            = useRef<string | null>(readCacheMeta()?.watermark ?? null);
+  const lastWatermarkVerifiedAtRef  = useRef<number>(readCacheMeta()?.timestamp ?? 0);
+  const recoveryRetryTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const broadcastRef                = useRef<BroadcastChannel | null>(null);
 
-  // Espelho sempre atualizado da lista atual — evita closures obsoletos nas
-  // ações (updateSchedule/deleteSchedule) sem precisar recriar os callbacks.
-  const schedulesRef                = useRef<Programacao[]>(schedules);
+  useEffect(() => {
+    mountedRef.current = true;
+    lifecycleRef.current += 1;
+    return () => {
+      mountedRef.current = false;
+      lifecycleRef.current += 1;
+      queuedSyncRef.current = null;
+      if (recoveryRetryTimerRef.current) {
+        clearTimeout(recoveryRetryTimerRef.current);
+        recoveryRetryTimerRef.current = null;
+      }
+      activeReadRef.current?.abort();
+      activeReadRef.current = null;
+      syncInProgressRef.current = false;
+    };
+  }, []);
+
+  const schedulesRef = useRef<Programacao[]>(schedules);
   useEffect(() => { schedulesRef.current = schedules; }, [schedules]);
 
-  // Alterações locais já CONFIRMADAS no banco que devem prevalecer sobre
-  // leituras atrasadas do servidor, até o servidor devolver o mesmo valor.
-  const pendingWritesRef            = useRef<Map<string, { item: Programacao; ts: number }>>(new Map());
-  // IDs recém-excluídos — impede que uma leitura atrasada "ressuscite" o item.
-  const deletedIdsRef               = useRef<Map<string, number>>(new Map());
-  // Debounce para eventos de tempo real (evita rajada de re-syncs).
-  const realtimeDebounceRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSyncAtRef               = useRef<number>(0);
+  const pendingWritesRef = useRef<Map<string, { item: Programacao; ts: number }>>(new Map());
+  const deletedIdsRef    = useRef<Map<string, number>>(new Map());
 
-  // Sincronização principal — busca do banco e mescla com alterações locais
-  const syncFromSheet = useCallback(async (silent = false, fresh = false) => {
-    if(!mountedRef.current)return;
+  const notifyOtherTabs = useCallback(() => {
+    try {
+      broadcastRef.current?.postMessage({ type: 'schedules-updated', ts: Date.now() });
+    } catch {
+      /* ignorar */
+    }
+  }, []);
+
+  // Sincronização principal — checa marcador leve em leituras automáticas antes do RPC completo
+  const syncFromSheet = useCallback(async (
+    silent = false,
+    fresh = false,
+    bypassWatermark = !silent,
+  ) => {
+    if (!mountedRef.current) return;
+    if (!isNavigatorOnline()) {
+      if (!silent) setSyncing(false);
+      setLoading(false);
+      const offlineMsg = schedulesRef.current.length > 0
+        ? 'Sem conexão com a internet. Exibindo dados salvos; a sincronização retomará ao reconectar.'
+        : 'Sem conexão com a internet. Aguardando reconexão para carregar as programações.';
+      setError(offlineMsg);
+      console.warn('[useSchedules] Dispositivo offline; aguardando reconexão para sincronizar.');
+      return;
+    }
     if (syncInProgressRef.current) {
-      const previous=queuedSyncRef.current;
-      queuedSyncRef.current={silent:previous ? previous.silent && silent : silent,fresh:previous ? previous.fresh || fresh : fresh};
+      const previous = queuedSyncRef.current;
+      queuedSyncRef.current = {
+        silent: previous ? previous.silent && silent : silent,
+        fresh: previous ? previous.fresh || fresh : fresh,
+        bypassWatermark: previous ? previous.bypassWatermark || bypassWatermark : bypassWatermark,
+      };
       return;
     }
 
+    if (recoveryRetryTimerRef.current) {
+      clearTimeout(recoveryRetryTimerRef.current);
+      recoveryRetryTimerRef.current = null;
+    }
+
     syncInProgressRef.current = true;
-    const lifecycle=lifecycleRef.current;
-    const controller=new AbortController();
-    activeReadRef.current=controller;
-    let timeout:ReturnType<typeof setTimeout> | undefined;
-    let timedOut = false;
-    // Momento em que ESTE sync começou. Se uma alteração local foi confirmada
-    // depois disso, este fetch pode ter dados antigos e não deve sobrescrevê-la.
+    lastAttemptAtRef.current = Date.now();
+    const lifecycle = lifecycleRef.current;
+    const controller = new AbortController();
+    activeReadRef.current = controller;
     const syncStartTs = Date.now();
     if (!silent) setSyncing(true);
     setError(null);
 
     try {
-      const data = await Promise.race([
-        fetchSchedules({fresh,signal:controller.signal}),
-        new Promise<never>((_,reject)=>{
-          timeout=setTimeout(()=>{
-            timedOut = true;
-            reject(new Error('A consulta de Lavagem e Lubrificação excedeu 20 segundos. Tentando novamente.'));
-            controller.abort();
-          },20_000);
-        }),
+      const canUseWatermark =
+        !bypassWatermark &&
+        schedulesRef.current.length > 0 &&
+        lastWatermarkRef.current !== null &&
+        Date.now() - lastWatermarkVerifiedAtRef.current < SCHEDULES_MAX_WATERMARK_AGE_MS;
+
+      if (canUseWatermark) {
+        const remoteWatermark = await fetchSchedulesWatermark(controller.signal);
+        if (!mountedRef.current || lifecycle !== lifecycleRef.current) return;
+        if (remoteWatermark !== null && remoteWatermark === lastWatermarkRef.current) {
+          const nowTs = Date.now();
+          lastSyncCompletedAtRef.current = nowTs;
+          lastWatermarkVerifiedAtRef.current = nowTs;
+          touchCacheTimestamp(remoteWatermark);
+          setFromCache(false);
+          setLastSync(new Date().toLocaleString('pt-BR'));
+          return;
+        }
+      }
+
+      const [data, latestWatermark] = await Promise.all([
+        runScheduleFetchWithRetry(
+          (attemptSignal) => fetchSchedules({ fresh, signal: attemptSignal }),
+          {
+            signal: controller.signal,
+            attemptTimeoutMs: SCHEDULE_ATTEMPT_TIMEOUT_MS,
+            maxRetries: 1,
+            retryDelayMs: 1_000,
+            onRetry: (attempt, err) => {
+              const detail = err instanceof Error ? err.message : String(err);
+              console.warn(`[useSchedules] Tentativa ${attempt} falhou (${detail}); repetindo consulta...`);
+            },
+          },
+        ),
+        fetchSchedulesWatermark(controller.signal).catch(() => null),
       ]);
-      if(!mountedRef.current || lifecycle!==lifecycleRef.current)return;
+
+      if (!mountedRef.current || lifecycle !== lifecycleRef.current) return;
       const sorted = sortBySheetOrder(data);
       const nowTs = Date.now();
       const prevLocal = schedulesRef.current;
       const serverIds = new Set(sorted.map(s => s.id));
 
-      // Mescla os dados do servidor preservando alterações locais confirmadas
-      // (Encerrar / Em andamento / Adiar / etc.). É isto que elimina o bug de
-      // "clico e alguns segundos depois volta ao estado anterior".
       const merged = sorted
         .filter(si => {
           const delTs = deletedIdsRef.current.get(si.id);
           if (delTs != null) {
-            if (nowTs - delTs < DELETED_GRACE_MS) return false; // exclusão recente: ignora "fantasma"
+            if (nowTs - delTs < DELETED_GRACE_MS) return false;
             deletedIdsRef.current.delete(si.id);
           }
           return true;
@@ -292,162 +379,223 @@ export function useSchedules() {
         .map(si => {
           const p = pendingWritesRef.current.get(si.id);
           if (!p) return si;
-          // Servidor JÁ reflete a alteração → paramos de proteger e confiamos nele.
           if (sameState(si, p.item)) { pendingWritesRef.current.delete(si.id); return si; }
-          // Fetch começou ANTES da escrita, ou estamos dentro da janela de
-          // proteção → mantém o valor local confirmado (não deixa "voltar").
           if (p.ts >= syncStartTs || nowTs - p.ts < PENDING_GRACE_MS) return p.item;
-          // Alteração antiga e o servidor diverge (mudança externa) → aceita servidor.
           pendingWritesRef.current.delete(si.id);
           return si;
         });
 
-      // Preserva itens recém-criados localmente que ainda não apareceram no servidor.
       const localOnly = prevLocal.filter(s => !serverIds.has(s.id) && !s.rowIndex);
       const finalArr = sortBySheetOrder([...merged, ...localOnly]);
 
-      schedulesRef.current=finalArr;
+      schedulesRef.current = finalArr;
+      lastSyncCompletedAtRef.current = Date.now();
+      lastWatermarkRef.current = latestWatermark;
+      lastWatermarkVerifiedAtRef.current = Date.now();
       setSchedules(finalArr);
-      saveToCache(finalArr);
+      saveToCache(finalArr, latestWatermark);
+      notifyOtherTabs();
       setFromCache(false);
       setLastSync(new Date().toLocaleString('pt-BR'));
-      lastSyncAtRef.current = Date.now();
       console.log(`[useSchedules] ✅ ${finalArr.length} registros (mesclados; ${pendingWritesRef.current.size} alteração(ões) local(is) pendente(s))`);
     } catch (err: any) {
-      if(!mountedRef.current || lifecycle!==lifecycleRef.current)return;
-      if (!timedOut && (controller.signal.aborted || err?.name === 'AbortError')) return;
-      const msg = err.message || 'Erro ao consultar as programações no Supabase';
-      console.error('[useSchedules] ❌ Erro:', msg);
+      if (!mountedRef.current || lifecycle !== lifecycleRef.current) return;
+      if (isAbortLikeError(err, controller.signal)) return;
+      const retryable = isRetryableScheduleError(err);
+      const msg = err?.message || 'Erro ao consultar as programações no Supabase';
+      const userMsg = retryable
+        ? 'Falha temporária de conexão com o Supabase. Tentando reconectar automaticamente...'
+        : msg;
 
       const cached = loadFromCache();
       if (cached && cached.length > 0) {
         setSchedules(cached);
         setFromCache(true);
-        setError(`Usando dados em cache (${getCacheAge()}). Erro: ${msg}`);
+        setError(`Usando dados em cache (${getCacheAge()}). ${userMsg}`);
+      } else if (schedulesRef.current.length > 0) {
+        setFromCache(true);
+        setError(`Mantendo últimos dados carregados. ${userMsg}`);
       } else {
-        setError(msg);
+        setError(userMsg);
         setSchedules([]);
       }
+
+      if (retryable) {
+        console.warn('[useSchedules] Sincronização adiada por falha transitória:', msg);
+        recoveryRetryTimerRef.current = setTimeout(() => {
+          recoveryRetryTimerRef.current = null;
+          if (!mountedRef.current) return;
+          if (!isPageVisible() || !isNavigatorOnline()) return;
+          void syncFromSheet(true, true, true);
+        }, 15_000);
+      } else {
+        console.error('[useSchedules] ❌ Erro:', msg);
+      }
     } finally {
-      if(timeout)clearTimeout(timeout);
-      if(activeReadRef.current===controller)activeReadRef.current=null;
-      if(mountedRef.current && lifecycle===lifecycleRef.current){
+      if (activeReadRef.current === controller) activeReadRef.current = null;
+      if (mountedRef.current && lifecycle === lifecycleRef.current) {
         if (!silent) setSyncing(false);
         setLoading(false);
         syncInProgressRef.current = false;
-        const queued=queuedSyncRef.current;
-        queuedSyncRef.current=null;
-        if(queued)void syncFromSheet(queued.silent,queued.fresh);
+        const queued = queuedSyncRef.current;
+        queuedSyncRef.current = null;
+        if (queued) void syncFromSheet(queued.silent, queued.fresh, queued.bypassWatermark);
       }
     }
-  }, []);
-
-  /** Baixa a fotografia só se a última leitura estiver mais velha que o limite. */
-  const syncIfStale = useCallback((minAgeMs: number) => {
-    if (!mountedRef.current || syncInProgressRef.current) return;
-    if (lastSyncAtRef.current && Date.now() - lastSyncAtRef.current < minAgeMs) return;
-    void syncFromSheet(true, true);
-  }, [syncFromSheet]);
+  }, [notifyOtherTabs]);
 
   // A confirmação é gravada pela RPC do histórico, fora do CRUD da tabela.
-  // Buscar o snapshot fresco para refletir a data confirmada também no controle.
   useEffect(() => {
     const onExecutionConfirmed = () => {
       clearCache();
-      void syncFromSheet(true, true);
+      lastWatermarkRef.current = null;
+      void syncFromSheet(true, true, true);
     };
     if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
     window.addEventListener('bp:pcm-execution-confirmed', onExecutionConfirmed);
     return () => window.removeEventListener('bp:pcm-execution-confirmed', onExecutionConfirmed);
   }, [syncFromSheet]);
 
-  // Carga inicial: mostrar cache imediatamente, sincronizar em background
+  // Sincronização instantânea entre abas do mesmo navegador (0 bytes no Supabase)
   useEffect(() => {
-    let timer:ReturnType<typeof setTimeout> | undefined;
+    const applyCacheFromAnotherTab = () => {
+      const cached = loadFromCache();
+      if (!cached) return;
+      const meta = readCacheMeta();
+      schedulesRef.current = cached;
+      if (meta?.watermark !== undefined) lastWatermarkRef.current = meta.watermark ?? null;
+      if (meta?.timestamp) lastWatermarkVerifiedAtRef.current = meta.timestamp;
+      setSchedules(cached);
+      setFromCache(false);
+      setLastSync(new Date().toLocaleString('pt-BR'));
+    };
+
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        const channel = new BroadcastChannel(SCHEDULES_BROADCAST_CHANNEL);
+        broadcastRef.current = channel;
+        channel.onmessage = (event) => {
+          if (event?.data?.type === 'schedules-updated') {
+            applyCacheFromAnotherTab();
+          }
+        };
+      } catch {
+        broadcastRef.current = null;
+      }
+    }
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === CACHE_KEY || event.key === CACHE_META_KEY) {
+        applyCacheFromAnotherTab();
+      }
+    };
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('storage', onStorage);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('storage', onStorage);
+      }
+      try {
+        broadcastRef.current?.close();
+      } catch {
+        /* ignorar */
+      }
+      broadcastRef.current = null;
+    };
+  }, []);
+
+  // Carga inicial: mostrar cache imediatamente e só checar servidor se o cache não estiver recente
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const cached = loadFromCache();
+    const meta = readCacheMeta();
     if (cached && cached.length > 0) {
-      // Dados em cache disponíveis — mostrar imediatamente, sync em background
       setSchedules(cached);
       setFromCache(true);
       setLoading(false);
       const cacheAge = getCacheAge();
       setLastSync(`Cache local (${cacheAge})`);
-      // Sync em background após 500ms (não bloqueia a renderização)
-      timer=setTimeout(() => syncFromSheet(true,true), 500);
+      if (
+        shouldRunInitialMountSync({
+          hasCache: true,
+          cacheTimestamp: meta?.timestamp ?? null,
+          now: Date.now(),
+        })
+      ) {
+        timer = setTimeout(() => void syncFromSheet(true, true, false), 500);
+      }
     } else {
-      // Sem cache — fazer sync normal (com loading)
-      void syncFromSheet(false,true);
+      // Adia 0ms para evitar abort duplicado no primeiro ciclo de StrictMode em dev
+      timer = setTimeout(() => void syncFromSheet(false, true, true), 0);
     }
-    return()=>{if(timer)clearTimeout(timer);};
+    return () => { if (timer) clearTimeout(timer); };
   }, [syncFromSheet]);
 
-  // Rede de segurança a cada 5 minutos; o tempo real cuida das mudanças.
+  // Auto-refresh econômico adaptativo (2 min na Lavagem, 5 min fora dela), pausado com aba oculta
   useEffect(() => {
     autoRefreshRef.current = setInterval(() => {
-      syncIfStale(AUTO_REFRESH_MS);
-    }, AUTO_REFRESH_MS);
+      const isHidden = !isPageVisible() || !isNavigatorOnline();
+      if (
+        shouldSkipAutoOrResumeSync({
+          now: Date.now(),
+          lastCompletedAt: lastSyncCompletedAtRef.current,
+          lastAttemptAt: lastAttemptAtRef.current,
+          syncInProgress: syncInProgressRef.current,
+          isHidden,
+          cooldownMs: Math.min(autoRefreshMs - 5_000, SCHEDULES_RESUME_COOLDOWN_MS),
+        })
+      ) {
+        return;
+      }
+      void syncFromSheet(true, true, false);
+    }, autoRefreshMs);
 
     return () => {
       if (autoRefreshRef.current) clearInterval(autoRefreshRef.current);
     };
-  }, [syncIfStale]);
+  }, [autoRefreshMs, syncFromSheet]);
 
-  // Abas em segundo plano podem ter timers congelados. Recuperar a tela/rede
-  // deve consultar novamente, mesmo quando outra leitura ainda está em curso.
-  useEffect(()=>{
+  // Ao retomar aba ou reconectar rede, verifica com cooldown de 45s (sem rajadas)
+  useEffect(() => {
     if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
-    const resume=()=>{syncIfStale(RESUME_MIN_MS);};
-    const visible=()=>{if(typeof document !== 'undefined' && document.visibilityState==='visible')resume();};
-    window.addEventListener('focus',resume);
-    window.addEventListener('online',resume);
+    const resume = () => {
+      const isHidden = !isPageVisible() || !isNavigatorOnline();
+      if (
+        shouldSkipAutoOrResumeSync({
+          now: Date.now(),
+          lastCompletedAt: lastSyncCompletedAtRef.current,
+          lastAttemptAt: lastAttemptAtRef.current,
+          syncInProgress: syncInProgressRef.current,
+          isHidden,
+          cooldownMs: SCHEDULES_RESUME_COOLDOWN_MS,
+        })
+      ) {
+        return;
+      }
+      void syncFromSheet(true, true, false);
+    };
+    const visible = () => { if (isPageVisible()) resume(); };
+    window.addEventListener('focus', resume);
+    window.addEventListener('online', resume);
     if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-      document.addEventListener('visibilitychange',visible);
+      document.addEventListener('visibilitychange', visible);
     }
-    return()=>{
-      window.removeEventListener('focus',resume);
-      window.removeEventListener('online',resume);
+    return () => {
+      window.removeEventListener('focus', resume);
+      window.removeEventListener('online', resume);
       if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
-        document.removeEventListener('visibilitychange',visible);
+        document.removeEventListener('visibilitychange', visible);
       }
     };
-  },[syncIfStale]);
+  }, [syncFromSheet]);
 
-  // ─── Tempo real (Supabase Realtime) ────────────────────────────────────────
-  // Escuta INSERT/UPDATE/DELETE na tabela e re-sincroniza (silencioso + fresco)
-  // com um pequeno debounce. Assim, quando alguém em OUTRO aparelho muda um
-  // status, esta tela atualiza sozinha na hora. O merge protege as alterações
-  // locais ainda não confirmadas.
-  useEffect(() => {
-    let active=true;
-    const channel = supabase
-      .channel('lavagem_lubrificacao_realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: LAVAGEM_TABLE },
-        (payload) => {
-          if(!active)return;
-          console.log('[useSchedules] 🔴 Realtime:', payload.eventType);
-          if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
-          realtimeDebounceRef.current = setTimeout(() => syncIfStale(REALTIME_MIN_MS), 400);
-        },
-      )
-      .subscribe((status) => {
-        if(!active)return;
-        console.log('[useSchedules] Realtime status:', status);
-        if(status==='SUBSCRIBED')syncIfStale(RESUME_MIN_MS);
-      });
-
-    return () => {
-      active=false;
-      if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current);
-      supabase.removeChannel(channel);
-    };
-  }, [syncIfStale]);
-
-  // Refresh manual (com spinner visível e bypass de cache)
+  // Refresh manual (com spinner visível e bypass completo de cache/marcador)
   const refresh = useCallback(() => {
-    clearCache(); // forçar leitura fresca da planilha
-    syncFromSheet(false, true);
+    clearCache();
+    lastWatermarkRef.current = null;
+    void syncFromSheet(false, true, true);
   }, [syncFromSheet]);
 
   // ─── Adicionar múltiplos itens ────────────────────────────────────────────
@@ -461,40 +609,35 @@ export function useSchedules() {
     const itemsWithId = allowedItems.map(item => ({ ...item, id: item.id || nanoid() }));
 
     if (itemsWithId.length === 0) return { sheetErrors };
-    
-    // Atualização otimista na UI — adicionar ao final temporariamente
+
     setSchedules(prev => {
       const updated = [...prev, ...itemsWithId];
-      saveToCache(updated);
+      saveToCache(updated, null);
       return updated;
     });
-    
-    // Escrever na planilha
+    notifyOtherTabs();
+
     for (const item of itemsWithId) {
       const result = await appendRowToSheet(item);
       if (!result.success) {
         sheetErrors.push(`Frota ${item.frota}: ${result.error}`);
       } else if (result.rowIndex) {
-        // Atualizar o rowIndex do item otimista para posição correta
         setSchedules(prev => {
-          const updated = prev.map(s => 
-            s.id === item.id ? { ...s, rowIndex: result.rowIndex } : s
+          const updated = prev.map(s =>
+            s.id === item.id ? { ...s, rowIndex: result.rowIndex } : s,
           );
           const sorted = sortBySheetOrder(updated);
-          saveToCache(sorted);
+          saveToCache(sorted, null);
           return sorted;
         });
       }
     }
-    
-    // Recarregar da planilha em background, mas SEM mostrar spinner global
-    // (silent=true) e com leitura fresca (fresh=true). Isso garante que o usuário
-    // veja "Adicionado na planilha!" imediatamente, sem precisar clicar de novo.
+
     clearCache();
-    setTimeout(() => syncFromSheet(true, true), 800);
-    setTimeout(() => syncFromSheet(true, true), 3000);
+    lastWatermarkRef.current = null;
+    setTimeout(() => syncFromSheet(true, true, true), 1_000);
     return { sheetErrors };
-  }, [syncFromSheet]);
+  }, [notifyOtherTabs, syncFromSheet]);
 
   // ─── Adicionar item único ─────────────────────────────────────────────────
   const addSingleSchedule = useCallback(async (item: Programacao): Promise<{ success: boolean; sheetError?: string }> => {
@@ -503,44 +646,38 @@ export function useSchedules() {
     }
     const withId = { ...item, id: item.id || nanoid() };
 
-    // Atualização otimista na UI — adicionar ao final temporariamente
     setSchedules(prev => {
       const updated = [...prev, withId];
-      saveToCache(updated);
+      saveToCache(updated, null);
       return updated;
     });
+    notifyOtherTabs();
 
     const result = await appendRowToSheet(withId);
     if (!result.success) {
-      // Reverter atualização otimista em caso de erro
       setSchedules(prev => prev.filter(s => s.id !== withId.id));
       return { success: false, sheetError: result.error };
     }
 
-    // Atualizar com o rowIndex correto retornado pela planilha
     if (result.rowIndex) {
       setSchedules(prev => {
-        const updated = prev.map(s => 
-          s.id === withId.id ? { ...s, rowIndex: result.rowIndex } : s
+        const updated = prev.map(s =>
+          s.id === withId.id ? { ...s, rowIndex: result.rowIndex } : s,
         );
         const sorted = sortBySheetOrder(updated);
-        saveToCache(sorted);
+        saveToCache(sorted, null);
         return sorted;
       });
     }
 
-    // Recarregar da planilha em background sem bloquear a UI nem reabrir spinner.
-    // Usar `silent=true, fresh=true` evita o efeito de tela travada ou de o
-    // usuário ter que clicar de novo após salvar.
     clearCache();
-    setTimeout(() => syncFromSheet(true, true), 800);
-    setTimeout(() => syncFromSheet(true, true), 2500);
+    lastWatermarkRef.current = null;
+    setTimeout(() => syncFromSheet(true, true, true), 1_000);
     return { success: true };
-  }, [syncFromSheet]);
+  }, [notifyOtherTabs, syncFromSheet]);
 
   // ─── Atualizar item ───────────────────────────────────────────────────────
   const updateSchedule = useCallback(async (id: string, updates: Partial<Programacao>): Promise<{ sheetError?: string }> => {
-    // Usa o espelho (ref) para obter o item atual sem depender de closures.
     const previousItem = schedulesRef.current.find(s => s.id === id);
     if (!previousItem) {
       return { sheetError: 'Registro indisponível; sincronize os dados e tente novamente.' };
@@ -548,45 +685,37 @@ export function useSchedules() {
     const updatedItem = applyEditableUpdates(previousItem, updates);
     const changes = changedEditableFields(previousItem, updatedItem);
 
-    // Formulários podem devolver a entidade inteira (inclusive metadados antigos)
-    // ao salvar. Sem diferença nos campos de negócio, não há escrita remota.
     if (Object.keys(changes).length === 0) return {};
 
-    // Atualização otimista na UI.
     setSchedules(prev => {
       const updated = prev.map(s => (s.id === id ? updatedItem : s));
-      saveToCache(updated);
+      saveToCache(updated, null);
       return updated;
     });
+    notifyOtherTabs();
 
     if (updatedItem.rowIndex) {
-      // Registra a intenção ANTES de aguardar a rede — assim qualquer leitura
-      // em andamento (auto-refresh, etc.) não consegue sobrescrever a mudança.
       pendingWritesRef.current.set(id, { item: updatedItem, ts: Date.now() });
 
       const result = await updateRowInSheet(updatedItem.rowIndex, updatedItem, changes);
       if (!result.success) {
-        // Falha REAL na gravação → reverte e remove a proteção.
-        // Mantemos a versão anterior por uma janela curta para que um fetch
-        // iniciado antes da resposta RPC não reaplique o estado otimista.
         pendingWritesRef.current.set(id, { item: previousItem, ts: Date.now() });
         setSchedules(prev => {
           const reverted = prev.map(s => (s.id === id ? previousItem : s));
-          saveToCache(reverted);
+          saveToCache(reverted, null);
           return reverted;
         });
+        notifyOtherTabs();
         return { sheetError: result.error };
       }
 
-      // Gravação confirmada. Atualiza o timestamp e re-sincroniza em segundo
-      // plano para alinhar rowIndex/edições de outros usuários. O merge
-      // preservará esta alteração até o servidor devolver o mesmo valor.
       pendingWritesRef.current.set(id, { item: updatedItem, ts: Date.now() });
       clearCache();
-      setTimeout(() => syncFromSheet(true, true), 1200);
+      lastWatermarkRef.current = null;
+      setTimeout(() => syncFromSheet(true, true, true), 1_200);
     }
     return {};
-  }, [syncFromSheet]);
+  }, [notifyOtherTabs, syncFromSheet]);
 
   // ─── Excluir item ─────────────────────────────────────────────────────────
   const deleteSchedule = useCallback(async (id: string): Promise<{ sheetError?: string }> => {
@@ -601,11 +730,10 @@ export function useSchedules() {
 
     if (!rowIndex || rowIndex < 1) {
       console.error('[useSchedules] rowIndex inválido:', rowIndex);
-      await syncFromSheet(false);
+      await syncFromSheet(false, true, true);
       return { sheetError: 'Não foi possível identificar o registro. Tente novamente após sincronizar.' };
     }
 
-    // Primeiro apagar do banco
     const result = await deleteRowFromSheet(rowIndex);
 
     if (!result.success) {
@@ -613,22 +741,22 @@ export function useSchedules() {
       return { sheetError: result.error };
     }
 
-    // Protege contra leituras atrasadas que possam "ressuscitar" o registro.
     deletedIdsRef.current.set(id, Date.now());
     pendingWritesRef.current.delete(id);
 
-    // Remoção da UI somente após confirmação do banco
     setSchedules(prev => {
       const updated = prev.filter(s => s.id !== id);
-      saveToCache(updated);
+      saveToCache(updated, null);
       return updated;
     });
+    notifyOtherTabs();
 
     clearCache();
-    setTimeout(() => syncFromSheet(true, true), 800);
+    lastWatermarkRef.current = null;
+    setTimeout(() => syncFromSheet(true, true, true), 1_000);
 
     return {};
-  }, [syncFromSheet]);
+  }, [notifyOtherTabs, syncFromSheet]);
 
   // ─── Estatísticas ─────────────────────────────────────────────────────────
   const stats: DashboardStats = {

@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useTheme, THEMES } from "../contexts/ThemeContext";
 import NotificationPanel from "./NotificationPanel";
+import AmbientBrandWatermark from "./AmbientBrandWatermark";
 import { AppAlert } from "../hooks/useNotifications";
 import "../styles/shell-theme.css";
 import "../styles/sidebar-motion.css";
@@ -297,6 +298,8 @@ export default function Layout({
           className={`shell-sidebar__panel ${navPopup ? "has-popout" : ""}`}
           onMouseLeave={scheduleNavPopupClose}
         >
+          <AmbientBrandWatermark variant="sidebar" />
+
           {/* Logo */}
           <div className="shell-sidebar__brand">
             <img src="/logo.png" alt="BRANCO PERES" className="shell-sidebar__logo" />
@@ -421,10 +424,12 @@ export default function Layout({
       )}
 
       {/* ═══ MAIN CONTENT ═══ */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        <AmbientBrandWatermark variant="workspace" />
+
         {/* Top bar — Glass Header */}
         <header
-          className="shell-header px-4 py-3 flex items-center gap-3"
+          className="shell-header relative z-[1] px-4 py-3 flex items-center gap-3"
           style={{
             backgroundColor: "var(--shell-header-bg)",
             borderBottom: "1px solid var(--shell-header-border)",
@@ -588,13 +593,13 @@ export default function Layout({
         <main
           className={
             currentPage === "gestao-ordens-manutencao"
-              ? "flex-1 min-h-0 flex flex-col overflow-hidden"
-              : "flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"
+              ? "relative z-[1] flex-1 min-h-0 flex flex-col overflow-hidden"
+              : "relative z-[1] flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"
           }
           style={{ backgroundColor: "transparent" }}
         >
           <div
-            key={currentPage}
+            key={["dashboard", "programacoes", "importar", "exportar"].includes(currentPage) ? "lavagem-premium-module" : currentPage}
             className={`shell-page-stage ${currentPage === "gestao-ordens-manutencao" ? "flex-1 min-h-0 flex flex-col" : ""}`}
           >
             {children}

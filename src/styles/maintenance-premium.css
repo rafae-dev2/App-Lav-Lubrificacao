@@ -22,7 +22,7 @@ html.theme-glassy-v18 .maintenance-tracking {
   background-color: #f4f0e3 !important;
   color: #173325 !important;
   color-scheme: light !important;
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
 }
 
 html.dark .maintenance-tracking,

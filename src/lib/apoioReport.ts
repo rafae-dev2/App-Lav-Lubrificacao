@@ -21,6 +21,8 @@ import {
   drawEquipmentPdfImage,
 } from './equipmentReportImages';
 import { downloadIllustratedExcel } from './equipmentExcel';
+import { createLogoWatermarkDataUrl, type WatermarkAsset } from './reportWatermark';
+import { isEmergencyOrder } from './tvOrders';
 
 type RGB = [number, number, number];
 type GroupedRows = ReturnType<typeof reportGroups>[number];
@@ -32,18 +34,19 @@ type PDFLogo = {
 type PDFBackdrop = { dataUrl: string | null };
 
 const COLORS = {
-  darkGreen: [20, 72, 47] as RGB,
-  green: [31, 107, 69] as RGB,
+  darkGreen: [14, 55, 35] as RGB,
+  green: [26, 92, 59] as RGB,
   greenMedium: [46, 139, 87] as RGB,
+  emeraldBright: [52, 211, 153] as RGB,
   greenLight: [232, 244, 236] as RGB,
   glass: [248, 252, 249] as RGB,
-  glassBorder: [204, 229, 212] as RGB,
-  ink: [24, 52, 37] as RGB,
+  glassBorder: [198, 224, 208] as RGB,
+  ink: [21, 40, 29] as RGB,
   muted: [72, 101, 84] as RGB,
   line: [194, 219, 201] as RGB,
   white: [255, 255, 255] as RGB,
-  warning: [126, 76, 0] as RGB,
-  warningFill: [255, 248, 225] as RGB,
+  warning: [146, 64, 14] as RGB,
+  warningFill: [255, 247, 237] as RGB,
   absence: [126, 42, 42] as RGB,
   absenceFill: [252, 237, 237] as RGB,
 };
@@ -202,6 +205,16 @@ function drawFooter(doc: jsPDF, page: number, total: number): void {
   doc.text(`Página ${page}/${total}`, pageW - PDF_MARGIN_X, pageH - 4.2, { align: 'right' });
 }
 
+function drawPageWatermark(doc: jsPDF, watermark: WatermarkAsset): void {
+  if (!watermark.dataUrl) return;
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const sizeMm = 112;
+  const x = (pageW - sizeMm) / 2;
+  const y = (pageH - sizeMm) / 2 + 6;
+  doc.addImage(watermark.dataUrl, 'PNG', x, y, sizeMm, sizeMm);
+}
+
 function drawCompactHeader(doc: jsPDF, logo: PDFLogo, backdrop: PDFBackdrop): void {
   const pageW = doc.internal.pageSize.getWidth();
   if (backdrop.dataUrl) {
@@ -210,20 +223,21 @@ function drawCompactHeader(doc: jsPDF, logo: PDFLogo, backdrop: PDFBackdrop): vo
     doc.setFillColor(...COLORS.darkGreen);
     doc.rect(0, 0, pageW, PDF_HEADER_H, 'F');
   }
-  doc.setFillColor(...COLORS.greenMedium);
-  doc.rect(0, 0, 2.2, PDF_HEADER_H, 'F');
+  doc.setFillColor(...COLORS.emeraldBright);
+  doc.rect(0, 0, pageW, 1.1, 'F');
+  doc.rect(0, 0, 2.4, PDF_HEADER_H, 'F');
 
   let left = 7;
   if (logo.dataUrl) {
-    doc.addImage(logo.dataUrl, 'PNG', 7, 4, 18, 18);
+    doc.addImage(logo.dataUrl, 'PNG', 7, 4.2, 18, 18);
     left = 29;
   }
   setPdfText(doc, COLORS.white, 10.5, 'bold');
-  doc.text('BRANCO PERES AGRO', left, 10.5);
+  doc.text('BRANCO PERES AGRO', left, 10.8);
   setPdfText(doc, [225, 235, 229], 8.3, 'normal');
-  doc.text('Controle de Equipamentos — Apoio', left, 18.2);
+  doc.text('Controle de Equipamentos — Apoio', left, 18.4);
   setPdfText(doc, [190, 246, 207], 7.2, 'bold');
-  doc.text('RELATÓRIO', pageW - PDF_MARGIN_X, 10.5, { align: 'right' });
+  doc.text('RELATÓRIO EXECUTIVO', pageW - PDF_MARGIN_X, 10.8, { align: 'right' });
 }
 
 function drawFirstPageHeader(
@@ -232,33 +246,38 @@ function drawFirstPageHeader(
   rows: ApoioReportRow[],
   logo: PDFLogo,
   backdrop: PDFBackdrop,
+  watermark: WatermarkAsset,
   generatedAt: Date,
 ): number {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const contentW = pageW - PDF_MARGIN_X * 2;
+  drawPageWatermark(doc, watermark);
+
   if (backdrop.dataUrl) {
     doc.addImage(backdrop.dataUrl, 'PNG', 0, 0, pageW, 43);
   } else {
     doc.setFillColor(...COLORS.darkGreen);
     doc.rect(0, 0, pageW, 43, 'F');
   }
-  doc.setFillColor(...COLORS.greenMedium);
-  doc.rect(0, 0, 2.2, 43, 'F');
+  doc.setFillColor(...COLORS.emeraldBright);
+  doc.rect(0, 0, pageW, 1.3, 'F');
+  doc.rect(0, 0, 2.6, 43, 'F');
 
   let left = 8;
   if (logo.dataUrl) {
-    doc.addImage(logo.dataUrl, 'PNG', 8, 6, 21, 21);
+    doc.addImage(logo.dataUrl, 'PNG', 8, 6.2, 21, 21);
     left = 34;
   }
   setPdfText(doc, COLORS.white, 12.5, 'bold');
   doc.text('BRANCO PERES AGRO', left, 13);
   setPdfText(doc, [226, 239, 231], 8, 'normal');
   doc.text('Controle de Equipamentos — Apoio', left, 20.5);
-  setPdfText(doc, [211, 255, 224], 16, 'bold');
-  doc.text('CONTROLE DE EQUIPAMENTOS', left, 34.5);
-  setPdfText(doc, COLORS.white, 8.5, 'bold');
-  doc.text('APOIO', pageW - PDF_MARGIN_X, 12, { align: 'right' });
+  const pdfHeading = text(options.reportTitle, 'CONTROLE DE EQUIPAMENTOS').toLocaleUpperCase('pt-BR');
+  setPdfText(doc, [211, 255, 224], pdfHeading.length > 32 ? 12 : 16, 'bold');
+  doc.text(pdfHeading, left, 34.5);
+  setPdfText(doc, COLORS.emeraldBright, 8.2, 'bold');
+  doc.text('APOIO · MANUTENÇÃO', pageW - PDF_MARGIN_X, 12, { align: 'right' });
   setPdfText(doc, [228, 239, 233], 7.3, 'normal');
   doc.text(`Gerado em ${reportDate(generatedAt.toISOString(), true)}`, pageW - PDF_MARGIN_X, 20, { align: 'right' });
   doc.text(`${rows.length} ${rows.length === 1 ? 'ordem selecionada' : 'ordens selecionadas'}`, pageW - PDF_MARGIN_X, 27, {
@@ -269,6 +288,7 @@ function drawFirstPageHeader(
   const headerPageLimit = pageH - PDF_FOOTER_H - 24;
   const continueHeader = () => {
     doc.addPage();
+    drawPageWatermark(doc, watermark);
     drawCompactHeader(doc, logo, backdrop);
     y = PDF_HEADER_H + 5;
     setPdfText(doc, COLORS.green, 8.2, 'bold');
@@ -280,14 +300,15 @@ function drawFirstPageHeader(
   };
   setPdfText(doc, COLORS.green, 9.2, 'bold');
   doc.text('Resumo operacional', PDF_MARGIN_X, y);
-  y += 5;
+  y += 4.5;
 
-  const metaLeft = ['Dados operacionais'];
-  const metaRight = [`Ordens selecionadas: ${rows.length}`];
-  setPdfText(doc, COLORS.muted, 7.7, 'normal');
-  metaLeft.forEach((line, index) => doc.text(line, PDF_MARGIN_X, y + index * 4.1));
-  metaRight.forEach((line, index) => doc.text(line, pageW - PDF_MARGIN_X, y + index * 4.1, { align: 'right' }));
-  y += 7;
+  const activeFilters = (options.filters ?? []).map((item) => reportDisplayText(item)).filter(Boolean);
+  const filterLine = activeFilters.length ? activeFilters.join('  ·  ') : 'Visão operacional completa da seleção';
+  setPdfText(doc, COLORS.muted, 7.5, 'normal');
+  const wrappedFilters = doc.splitTextToSize(filterLine, contentW - 44);
+  doc.text(wrappedFilters[0] ?? filterLine, PDF_MARGIN_X, y);
+  doc.text(`Ordens selecionadas: ${rows.length}`, pageW - PDF_MARGIN_X, y, { align: 'right' });
+  y += 5.5;
 
   const hasClosedRows = rows.some((row) => getMaintenanceOrderClosure(row).status === 'encerrado');
   const hasUnconfirmedRows = rows.some((row) => getMaintenanceOrderClosure(row).status === 'ausente');
@@ -343,10 +364,12 @@ function drawFirstPageHeader(
     doc.setDrawColor(...COLORS.glassBorder);
     doc.setLineWidth(0.25);
     doc.roundedRect(x, y, boxW, boxH, 1.6, 1.6, 'FD');
+    doc.setFillColor(...(index === 3 ? [180, 83, 9] as RGB : COLORS.greenMedium));
+    doc.rect(x + 0.5, y, boxW - 1, 1.3, 'F');
     setPdfText(doc, COLORS.green, 13, 'bold');
-    doc.text(String(kpi.value), x + boxW / 2, y + 8, { align: 'center' });
+    doc.text(String(kpi.value), x + boxW / 2, y + 8.6, { align: 'center' });
     setPdfText(doc, COLORS.muted, 6.3, 'bold');
-    doc.text(doc.splitTextToSize(kpi.label, boxW - 3), x + boxW / 2, y + 14.2, { align: 'center' });
+    doc.text(doc.splitTextToSize(kpi.label, boxW - 3), x + boxW / 2, y + 14.4, { align: 'center' });
   });
   y += boxH + 7;
 
@@ -422,16 +445,25 @@ async function buildPdf(options: ApoioReportOptions): Promise<jsPDF> {
   const generatedAt = new Date();
   const equipmentImages = await preloadEquipmentImages(rows);
   assertEquipmentReportImagesLoaded(rows, equipmentImages);
-  const logo = await loadLogoForPdf();
+  const [logo, watermark] = await Promise.all([
+    loadLogoForPdf(),
+    createLogoWatermarkDataUrl('/logo.png', {
+      alpha: 0.055,
+      size: 520,
+      withFrameRings: true,
+      ringColor: 'rgba(20, 72, 47, 0.08)',
+    }),
+  ]);
   const backdrop = createPdfBackdrop();
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
 
-  let firstContentY = drawFirstPageHeader(doc, options, rows, logo, backdrop, generatedAt);
+  let firstContentY = drawFirstPageHeader(doc, options, rows, logo, backdrop, watermark, generatedAt);
   const minimumTableSpace = 24;
   if (firstContentY > pageH - PDF_FOOTER_H - minimumTableSpace) {
     doc.addPage();
+    drawPageWatermark(doc, watermark);
     drawCompactHeader(doc, logo, backdrop);
     firstContentY = PDF_HEADER_H + 5;
   }
@@ -443,6 +475,7 @@ async function buildPdf(options: ApoioReportOptions): Promise<jsPDF> {
     const currentPage = getCurrentPage(doc);
     if (cursorY > pageH - PDF_FOOTER_H - 19) {
       doc.addPage();
+      drawPageWatermark(doc, watermark);
       drawCompactHeader(doc, logo, backdrop);
       cursorY = PDF_HEADER_H + 5;
     } else if (groupIndex > 0 && currentPage !== getCurrentPage(doc)) {
@@ -491,7 +524,7 @@ async function buildPdf(options: ApoioReportOptions): Promise<jsPDF> {
         valign: 'middle',
         minCellHeight: 7,
       },
-      alternateRowStyles: { fillColor: [248, 250, 248] as RGB },
+      alternateRowStyles: { fillColor: [244, 250, 246] as RGB },
       columnStyles: {
         0: { cellWidth: PDF_COLUMN_WIDTHS[0] },
         1: { cellWidth: PDF_COLUMN_WIDTHS[1] },
@@ -504,6 +537,7 @@ async function buildPdf(options: ApoioReportOptions): Promise<jsPDF> {
       didParseCell: (data) => {
         if (data.section !== 'body') return;
         const row = group.rows[data.row.index];
+        const emergency = row ? isEmergencyOrder(row) : false;
         const resolvedEquipment = row ? resolveEquipmentImage(row) : null;
         const hasEquipmentImage = Boolean(
           resolvedEquipment && equipmentImages.has(resolvedEquipment.key),
@@ -516,6 +550,10 @@ async function buildPdf(options: ApoioReportOptions): Promise<jsPDF> {
             left: 16,
           };
           data.cell.styles.minCellHeight = 14;
+        }
+        if (emergency && (data.column.index === 4 || data.column.index === 5)) {
+          data.cell.styles.textColor = COLORS.warning;
+          data.cell.styles.fontStyle = 'bold';
         }
         if (data.column.index === 3 && data.cell.raw && String(data.cell.raw).startsWith('Verificar data')) {
           data.cell.styles.textColor = COLORS.warning;
@@ -558,7 +596,10 @@ async function buildPdf(options: ApoioReportOptions): Promise<jsPDF> {
         }
       },
       willDrawPage: (pageData) => {
-        if (getCurrentPage(doc) > 1) drawCompactHeader(doc, logo, backdrop);
+        if (getCurrentPage(doc) > 1) {
+          drawPageWatermark(doc, watermark);
+          drawCompactHeader(doc, logo, backdrop);
+        }
         if (pageData.pageNumber > 1) drawGroupHeading(doc, group, PDF_HEADER_H + 3);
       },
       didDrawPage: () => {
@@ -619,7 +660,7 @@ function excelDetailRow(row: ApoioReportRow, now: Date): Record<string, unknown>
 function excelMetaRows(options: ApoioReportOptions, rows: ApoioReportRow[], now: Date): Array<[string, unknown]> {
   const kpis = getOperationalReportKpis(rows);
   const metadata: Array<[string, unknown]> = [
-    ['Relatório', 'Controle de Equipamentos — Apoio'],
+    ['Relatório', text(options.reportTitle, 'Controle de Equipamentos — Apoio')],
     ['Visão', reportDisplayText(options.view, 'Não informada')],
     ['Gerado em', reportDate(now.toISOString(), true)],
     ['Ordens filtradas', rows.length],

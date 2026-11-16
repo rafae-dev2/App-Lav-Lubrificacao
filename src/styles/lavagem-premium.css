@@ -61,7 +61,7 @@ html.theme-glassy-v18 .lavagem-premium {
   background: var(--lavagem-ivory) !important;
   color: var(--lavagem-ink) !important;
   color-scheme: light !important;
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
   line-height: 1.45;
 }
 
@@ -331,7 +331,7 @@ html.theme-glassy-v18 .app-shell .lavagem-premium :is(input, select, textarea) {
   border-radius: 9px !important;
   background: var(--lavagem-ivory) !important;
   color: var(--lavagem-ink) !important;
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
   box-shadow: inset 0 1px 2px rgba(11, 50, 31, .05) !important;
   opacity: 1 !important;
   backdrop-filter: none !important;
@@ -356,7 +356,7 @@ html.theme-glassy-v18 .app-shell .lavagem-premium select option {
 }
 
 .lavagem-premium .lavagem-premium-body button {
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
 }
 
 /* Botões primários: verde profundo com filete metálico. */
@@ -389,7 +389,7 @@ html.theme-glassy-v18 .app-shell .lavagem-premium select option {
 .lavagem-premium .lub-module {
   min-width: 0;
   color: var(--lub-text) !important;
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
 }
 
 /* O cabeçalho próprio do módulo já foi substituído pelo hero do wrapper. */
@@ -674,7 +674,7 @@ html.theme-glassy-v18 .lub-premium-modal {
   --lavagem-line: #d6c596 !important;
   color-scheme: light !important;
   color: var(--lavagem-ink) !important;
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
 }
 
 .lub-premium-modal .lub-modal,
@@ -918,4 +918,74 @@ html.theme-glassy-v18 .app-shell .lavagem-premium .lub-toolbar button[class*="bg
 }
 html.theme-glassy-v18 .app-shell .lavagem-premium .lub-toolbar button[class*="bg-amber-"] > span {
   color: inherit !important;
+}
+
+@keyframes lavagemTabEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.lavagem-premium .lavagem-premium-tab-panel {
+  min-width: 0;
+  contain: layout style;
+  will-change: opacity, transform;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  animation: lavagemTabEnter 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.lavagem-premium .lavagem-perf-soft-warning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  background: rgba(251, 243, 217, 0.92);
+  border: 1px solid rgba(180, 130, 38, 0.38);
+  color: #6b4c14;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  box-shadow: 0 6px 18px -8px rgba(49, 39, 21, 0.22);
+  animation: lavagemTabEnter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.lavagem-premium .lavagem-perf-soft-warning__icon {
+  flex: 0 0 auto;
+  color: #b7791f;
+}
+
+.lavagem-premium .lavagem-perf-soft-warning__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lavagem-premium .lavagem-perf-soft-warning__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  padding: 0;
+  border-radius: 9999px;
+  border: 1px solid rgba(180, 130, 38, 0.28);
+  background: rgba(255, 255, 255, 0.65);
+  color: inherit;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lavagem-premium .lavagem-premium-tab-panel,
+  .lavagem-premium .lavagem-perf-soft-warning {
+    animation: none !important;
+    will-change: auto;
+  }
 }

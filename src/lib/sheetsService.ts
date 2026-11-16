@@ -20,6 +20,7 @@ import {
   effectiveScheduleCompletionDate,
   getScheduleCompletionSource,
 } from './schedulePresentation';
+import { buildSchedulesWatermark } from './egressCachePolicy';
 
 // ─── Config (compat) ──────────────────────────────────────────────────────────
 // Mantida apenas para não quebrar Configuracoes.tsx e outros usos.
@@ -287,13 +288,18 @@ function isMissingProgramacoesRpc(error: { code?: string; message?: string } | n
 }
 
 function isAbortError(
-  error: { name?: string; code?: string; message?: string } | null | undefined,
+  error: { name?: string; code?: string; message?: string; details?: string } | null | undefined,
   signal?: AbortSignal,
 ): boolean {
   if (signal?.aborted) return true;
   const name = String(error?.name || '');
   const message = String(error?.message || '');
-  return name === 'AbortError' || /\babort(ed|error)?\b/i.test(message);
+  const details = String(error?.details || '');
+  return (
+    name === 'AbortError' ||
+    /\babort(ed|error)?\b/i.test(message) ||
+    /\babort(ed|error)?\b/i.test(details)
+  );
 }
 
 function createAbortError(): Error {
@@ -306,10 +312,10 @@ async function fetchLegacySchedules(signal?: AbortSignal): Promise<DbRow[]> {
   const rows: DbRow[] = [];
   for (let offset = 0; ; offset += LEGACY_PAGE_SIZE) {
     if (signal?.aborted) throw createAbortError();
-    let query=supabase.from(LAVAGEM_TABLE).select(LEGACY_COLUMNS)
-      .order('id',{ascending:true}).range(offset,offset+LEGACY_PAGE_SIZE-1);
-    if(signal)query=query.abortSignal(signal);
-    const {data,error}=await query;
+    let query = supabase.from(LAVAGEM_TABLE).select(LEGACY_COLUMNS)
+      .order('id', { ascending: true }).range(offset, offset + LEGACY_PAGE_SIZE - 1);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
 
     if (error) {
       if (isAbortError(error, signal)) throw createAbortError();
@@ -322,21 +328,74 @@ async function fetchLegacySchedules(signal?: AbortSignal): Promise<DbRow[]> {
   return rows;
 }
 
+/**
+ * Consulta ultraleve (~120 bytes) para checar se houve inserção, edição ou
+ * exclusão na tabela antes de baixar o snapshot completo do RPC.
+ * Retorna `null` caso não seja possível verificar (forçando leitura completa).
+ */
+export async function fetchSchedulesWatermark(signal?: AbortSignal): Promise<string | null> {
+  if (signal?.aborted) throw createAbortError();
+  try {
+    let query = supabase
+      .from(LAVAGEM_TABLE)
+      .select('id,updated_at', { count: 'exact' })
+      .order('updated_at', { ascending: false })
+      .range(0, 0);
+    if (signal && typeof query.abortSignal === 'function') {
+      query = query.abortSignal(signal);
+    }
+    const { data, error, count } = (await query) as {
+      data: Array<{ id?: number | string | null; updated_at?: string | null }> | null;
+      error: { name?: string; message?: string; details?: string } | null;
+      count?: number | null;
+    };
+    if (error) {
+      if (isAbortError(error, signal)) throw createAbortError();
+      return null;
+    }
+    // Mocks simples sem suporte a count ou sem registros detalhados recaem com segurança.
+    if (typeof count !== 'number') return null;
+    const top = Array.isArray(data) && data.length > 0 ? data[0] : null;
+    return buildSchedulesWatermark(count, top?.id ?? null, top?.updated_at ?? null);
+  } catch (err) {
+    if (isAbortError(err as { name?: string; message?: string; details?: string }, signal)) {
+      throw createAbortError();
+    }
+    return null;
+  }
+}
+
 export async function fetchSchedules(_opts?: { fresh?: boolean; signal?: AbortSignal }): Promise<Programacao[]> {
   if (_opts?.signal?.aborted) throw createAbortError();
   console.log('[supabase] Buscando snapshot de programações via RPC...');
 
   let rows: DbRow[];
-  let query=supabase.rpc(PROGRAMACOES_RPC);
-  if(_opts?.signal)query=query.abortSignal(_opts.signal);
-  const { data, error } = await query;
+  let query = supabase.rpc(PROGRAMACOES_RPC);
+  if (_opts?.signal) query = query.abortSignal(_opts.signal);
+
+  let data: unknown = null;
+  let error: { code?: string; message?: string; details?: string; name?: string } | null = null;
+  try {
+    const response = await query;
+    data = response.data;
+    error = response.error;
+  } catch (err) {
+    if (isAbortError(err as { name?: string; message?: string; details?: string }, _opts?.signal)) {
+      throw createAbortError();
+    }
+    throw err;
+  }
+
   if (error) {
     if (isAbortError(error, _opts?.signal)) {
       throw createAbortError();
     }
     if (!isMissingProgramacoesRpc(error)) {
-      console.error('[supabase] Erro no RPC de programações:', error.message);
-      throw new Error(`Supabase: ${error.message}`);
+      const detail = String(error.message || 'Erro ao consultar programações.');
+      if (/failed to fetch|networkerror|load failed|fetcherror/i.test(detail)) {
+        throw new TypeError(`Falha de conexão com o Supabase (Failed to fetch): ${detail}`);
+      }
+      throw new Error(`Supabase: ${detail}`);
     }
     console.warn('[supabase] RPC ausente; usando fallback legado paginado.');
     rows = await fetchLegacySchedules(_opts?.signal);

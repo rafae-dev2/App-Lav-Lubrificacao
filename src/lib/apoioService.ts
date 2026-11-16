@@ -1,6 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
-import { ApoioData, ApoioFleet, ApoioGroup, ApoioOrder, ApoioSync } from '../types/apoio';
+import { ApoioData, ApoioFleet, ApoioGroup } from '../types/apoio';
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './supabaseClient';
+import {
+  buildApoioWatermark,
+  loadWithConditionalCache,
+  SharedSnapshotCache,
+} from './egressCachePolicy';
 
 /**
  * Cliente isolado da seção Apoio.
@@ -21,9 +26,54 @@ export const apoioClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
 });
 
-const CLIENT_SYNC_THROTTLE_MS = 60_000;
+const CLIENT_SYNC_THROTTLE_MS = 120_000;
+const MANUAL_SYNC_COOLDOWN_MS = 15_000;
+const APOIO_BROADCAST_CHANNEL = 'bp_apoio_snapshots_v1';
 let lastSyncAttemptAt = 0;
 let syncInFlight: Promise<void> | null = null;
+
+const apoioSnapshotCache = new SharedSnapshotCache<ApoioData>();
+const externalInvalidators = new Set<() => void>();
+let broadcastChannel: BroadcastChannel | null = null;
+
+function ensureBroadcastChannel(): BroadcastChannel | null {
+  if (typeof BroadcastChannel === 'undefined') return null;
+  if (broadcastChannel) return broadcastChannel;
+  try {
+    broadcastChannel = new BroadcastChannel(APOIO_BROADCAST_CHANNEL);
+    broadcastChannel.onmessage = (event) => {
+      if (event?.data?.type === 'invalidate') {
+        invalidateApoioSnapshots(false);
+      }
+    };
+  } catch {
+    broadcastChannel = null;
+  }
+  return broadcastChannel;
+}
+
+ensureBroadcastChannel();
+
+export function registerApoioSnapshotInvalidator(listener: () => void): () => void {
+  externalInvalidators.add(listener);
+  return () => {
+    externalInvalidators.delete(listener);
+  };
+}
+
+export function invalidateApoioSnapshots(broadcast = true): void {
+  apoioSnapshotCache.invalidate();
+  externalInvalidators.forEach((fn) => {
+    try { fn(); } catch { /* ignore */ }
+  });
+  if (broadcast) {
+    try {
+      ensureBroadcastChannel()?.postMessage({ type: 'invalidate', ts: Date.now() });
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 type SupabaseErrorLike = { message?: string; details?: string; hint?: string; code?: string };
 
@@ -43,8 +93,49 @@ function requireNonEmpty(value: string, field: string): string {
   return normalized;
 }
 
-/** Carrega sempre do Supabase; nenhum cache local de dados é usado. */
-export async function loadApoioData(): Promise<ApoioData> {
+/**
+ * Consulta ~150 bytes (apoio_sync + contagens head) antes de baixar snapshots
+ * multi-megabyte em leituras automáticas.
+ */
+export async function fetchApoioWatermark(signal?: AbortSignal): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const abortParent = () => controller.abort();
+    signal?.addEventListener('abort', abortParent, { once: true });
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const [syncRes, groupsRes, fleetsRes] = await Promise.all([
+        apoioClient
+          .from('apoio_sync')
+          .select('fonte_atualizada,total,erro')
+          .eq('id', 1)
+          .abortSignal(controller.signal)
+          .maybeSingle(),
+        apoioClient
+          .from('apoio_grupos')
+          .select('id', { count: 'exact', head: true })
+          .abortSignal(controller.signal),
+        apoioClient
+          .from('apoio_frotas')
+          .select('frota', { count: 'exact', head: true })
+          .abortSignal(controller.signal),
+      ]);
+      if (syncRes.error || groupsRes.error || fleetsRes.error) return null;
+      return buildApoioWatermark(
+        syncRes.data,
+        groupsRes.count ?? null,
+        fleetsRes.count ?? null,
+      );
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', abortParent);
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function fetchApoioFull(): Promise<{ value: ApoioData; version: string | null }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   let response;
@@ -55,7 +146,22 @@ export async function loadApoioData(): Promise<ApoioData> {
   if (!data || !Array.isArray(data.groups) || !Array.isArray(data.fleets) || !Array.isArray(data.orders)) {
     throw new Error('[Apoio] O banco retornou uma fotografia incompleta. Verifique o SQL de instalação.');
   }
-  return data as ApoioData;
+  const snapshot = data as ApoioData;
+  const version = buildApoioWatermark(snapshot.sync, snapshot.groups.length, snapshot.fleets.length);
+  return { value: snapshot, version };
+}
+
+/**
+ * Carrega snapshot do Apoio usando cache condicional leve para evitar downloads
+ * repetidos em trocas de aba e polls sem alteração na fonte.
+ */
+export async function loadApoioData(options: { force?: boolean } = {}): Promise<ApoioData> {
+  return loadWithConditionalCache({
+    cache: apoioSnapshotCache,
+    force: options.force ?? false,
+    fetchVersion: () => fetchApoioWatermark(),
+    fetchFull: fetchApoioFull,
+  });
 }
 
 /**
@@ -143,6 +249,7 @@ export async function saveApoioGroup(group: ApoioGroup): Promise<void> {
     .from('apoio_grupos')
     .upsert({ id, nome, cor }, { onConflict: 'id' });
   throwIfError(error, 'salvar grupo');
+  invalidateApoioSnapshots();
 }
 
 export async function deleteApoioGroup(id: string): Promise<void> {
@@ -150,6 +257,7 @@ export async function deleteApoioGroup(id: string): Promise<void> {
   const { error } = await apoioClient.from('apoio_grupos').delete().eq('id', groupId);
   // A FK apoio_frotas.grupo_id é RESTRICT; o erro é propagado de propósito.
   throwIfError(error, 'excluir grupo');
+  invalidateApoioSnapshots();
 }
 
 export async function saveApoioFleet(fleet: ApoioFleet): Promise<void> {
@@ -161,23 +269,26 @@ export async function saveApoioFleet(fleet: ApoioFleet): Promise<void> {
     .from('apoio_frotas')
     .upsert({ frota, grupo_id: grupoId, nome }, { onConflict: 'frota' });
   throwIfError(error, 'salvar frota');
+  invalidateApoioSnapshots();
 }
 
 export async function deleteApoioFleet(frota: string): Promise<void> {
   const fleetId = requireNonEmpty(frota, 'frota');
   const { error } = await apoioClient.from('apoio_frotas').delete().eq('frota', fleetId);
   throwIfError(error, 'excluir frota');
+  invalidateApoioSnapshots();
 }
 
 /**
- * Solicita uma atualização no servidor. O navegador aplica apenas um
- * throttle de chamadas; a proteção real, compartilhada entre abas e usuários,
+ * Solicita uma atualização no servidor. O navegador aplica um throttle em
+ * leituras automáticas (2 min) e curto em chamadas manuais (15s); a trava real
  * está no claim_apoio_sync() atômico executado pela Edge Function.
  */
-export async function syncApoio(): Promise<void> {
+export async function syncApoio(options: { force?: boolean } = {}): Promise<void> {
   if (syncInFlight) return syncInFlight;
   const now = Date.now();
-  if (now - lastSyncAttemptAt < CLIENT_SYNC_THROTTLE_MS) return;
+  const minInterval = options.force ? MANUAL_SYNC_COOLDOWN_MS : CLIENT_SYNC_THROTTLE_MS;
+  if (now - lastSyncAttemptAt < minInterval) return;
   lastSyncAttemptAt = now;
 
   syncInFlight = (async () => {
@@ -202,6 +313,7 @@ export async function syncApoio(): Promise<void> {
         throw new Error(`[Apoio] sincronizar ordens: ${detail}`);
       }
       if (data?.ok === false) throw new Error(`[Apoio] sincronizar ordens: ${data.erro || 'resposta rejeitada pelo servidor'}`);
+      if (data?.aplicado) invalidateApoioSnapshots();
     } finally {
       clearTimeout(timeout);
     }

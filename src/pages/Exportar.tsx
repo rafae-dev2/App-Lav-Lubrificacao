@@ -9,6 +9,13 @@ import { useTheme } from '../contexts/ThemeContext';
 import { type PCMReportFilters } from '../lib/pcmReportFilters';
 import { getDailyExportWindow, getDailyExportWindowKey, getDailyExportStats } from '../lib/dailyExport';
 import { getLubricationClosedWindowStart, selectLubricationExportSchedules } from '../lib/lubricationExport';
+import {
+  PDF_LAYOUT_OPTIONS,
+  exportLubricationStructuredPdf,
+  readStoredPdfLayout,
+  saveStoredPdfLayout,
+  type PdfExportLayout,
+} from '../lib/lubricationPdfExport';
 interface Props {
   schedules: Programacao[];
 }
@@ -1171,6 +1178,7 @@ export default function Exportar({ schedules }: Props) {
   const [genSuccess, setGenSuccess] = useState<string | null>(null);
   const [exportTheme, setExportTheme] = useState<ExportTheme>('light');
   const [exportSize, setExportSize] = useState<ExportSize>('original');
+  const [pdfLayout, setPdfLayout] = useState<PdfExportLayout>(() => readStoredPdfLayout());
 
   const [clock, setClock] = useState(() => Date.now());
   const now = useMemo(() => new Date(clock), [clock]);
@@ -1236,203 +1244,38 @@ export default function Exportar({ schedules }: Props) {
     });
   };
 
-  // ─── Gerar PDF ─────────────────────────────────────────────────────────────
+  // ─── Gerar PDF Estruturado ─────────────────────────────────────────────────
   const handleGeneratePdf = async () => {
     setGeneratingPdf(true); setGenError(null); setGenSuccess(null);
     try {
-      const { jsPDF } = await import('jspdf');
-      const { default: autoTable } = await import('jspdf-autotable');
-
-      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-      const pageW = doc.internal.pageSize.getWidth();
-      const pageH = doc.internal.pageSize.getHeight();
       const now = new Date();
       const filtered = selectRowsForExport(now);
       const stats = getDailyExportStats(filtered);
-      const equipmentMedia = await preloadEquipmentImages(filtered);
-      assertEquipmentReportImagesLoaded(filtered,equipmentMedia);
       setClock(now.getTime());
-      const th = THEMES[exportTheme];
-
-      let logoDataUrl: string | null = null;
-      try {
-        const img = await loadLogo('/logo.png');
-        if (img) {
-          const c = document.createElement('canvas');
-          c.width = img.width; c.height = img.height;
-          c.getContext('2d')!.drawImage(img, 0, 0);
-          logoDataUrl = c.toDataURL('image/png');
-        }
-      } catch { /* sem logo */ }
-
-      const drawHeader = (isFirst: boolean) => {
-        doc.setFillColor(...th.pdfHeaderRgb);
-        doc.rect(0, 0, pageW, 24, 'F');
-        doc.setFillColor(...th.pdfHeaderRgb2);
-        doc.rect(pageW * 0.6, 0, pageW * 0.4, 24, 'F');
-        doc.setFillColor(...th.pdfAccentRgb);
-        doc.rect(0, 0, 3, 24, 'F');
-
-        if (logoDataUrl) doc.addImage(logoDataUrl, 'PNG', 5, 3, 18, 18);
-
-        doc.setTextColor(...th.pdfTableHeaderTextRgb);
-        doc.setFontSize(14); doc.setFont('helvetica', 'bold');
-        doc.text('BRANCO PERES', logoDataUrl ? 26 : 8, 11);
-        doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-        doc.text('Controle de Lavagem e Lubrificação', logoDataUrl ? 26 : 8, 18);
-
-        doc.setFontSize(7.5);
-        doc.text(
-          `Gerado: ${format(now, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}  ·  Total: ${stats.total} reg.`,
-          pageW - 6, 11, { align: 'right' }
-        );
-        doc.text(`Tema: ${th.emoji} ${th.name}`, pageW - 6, 18, { align: 'right' });
-      };
-
-      const drawStats = () => {
-        const items = [
-          { label: 'Atrasado',   value: stats.atrasado,   rgb: [185,28,28]   as [number,number,number], bgRgb: [254,226,226] as [number,number,number] },
-          { label: 'Pendente',   value: stats.pendente,   rgb: [161,98,7]    as [number,number,number], bgRgb: [254,249,195] as [number,number,number] },
-          { label: 'Programado', value: stats.programado, rgb: [29,78,216]   as [number,number,number], bgRgb: [219,234,254] as [number,number,number] },
-          { label: 'Andamento',  value: stats.andamento,  rgb: [124,58,237]  as [number,number,number], bgRgb: [243,232,255] as [number,number,number] },
-          { label: 'Encerrado',  value: stats.encerrado,  rgb: [21,128,61]   as [number,number,number], bgRgb: [220,252,231] as [number,number,number] },
-        ];
-        const BOX_Y = 27;
-        const BOX_H = 18;
-        const gap = 3;
-        // 5 cards (inclui Andamento) — mesma divisão usada no relatório em PNG
-        const itemW = (pageW - 16 - gap * 4) / 5;
-
-        items.forEach((item, i) => {
-          const x = 8 + i * (itemW + gap);
-          const cx = x + itemW / 2;
-          doc.setFillColor(...item.bgRgb);
-          doc.roundedRect(x, BOX_Y, itemW, BOX_H, 2, 2, 'F');
-          doc.setFillColor(...item.rgb);
-          doc.rect(x, BOX_Y, itemW, 2, 'F');
-          doc.setTextColor(...item.rgb);
-          doc.setFontSize(13); doc.setFont('helvetica', 'bold');
-          doc.text(String(item.value), cx, BOX_Y + 9, { align: 'center' });
-          doc.setFontSize(6.5); doc.setFont('helvetica', 'bold');
-          doc.text(item.label.toUpperCase(), cx, BOX_Y + 15, { align: 'center' });
-        });
-      };
-
-      drawHeader(true);
-      drawStats();
-
-      const equipmentDrawnRows = new Set<number>();
-      autoTable(doc, {
-        head: [['Frota', 'Tipo', 'Local', 'Data', 'Horário', 'Realizada', 'Status', 'Observação']],
-        body: filtered.map(s => [
-          s.frota,
-          s.tipoPreventiva,
-          s.descricaoPonto,
-          formatDate(s.dataProgramada),
-          s.horarioAgendado || '—',
-          formatDate(s.dataRealizada),
-          STATUS_STYLE[s.situacao].label,
-          s.observacao || '—',
-        ]),
-        styles: {
-          fontSize: 8,
-          cellPadding: 2.8,
-          valign: 'middle',
-          overflow: 'linebreak',
-          textColor: th.pdfTextRgb,
-          fillColor: th.pdfAltRowRgb,
-        },
-        headStyles: {
-          fillColor: th.pdfTableHeaderRgb,
-          textColor: th.pdfTableHeaderTextRgb,
-          fontStyle: 'bold',
-          halign: 'left',
-          fontSize: 8.5,
-        },
-        alternateRowStyles: { fillColor: th.pdfAltRowRgb },
-        columnStyles: {
-          0: { fontStyle: 'bold', cellWidth: 32, halign: 'left' },
-          1: { cellWidth: 46 },
-          2: { cellWidth: 24 },
-          3: { cellWidth: 20, halign: 'center' },
-          4: { cellWidth: 18, halign: 'center' },
-          5: { cellWidth: 20, halign: 'center' },
-          6: { cellWidth: 26, halign: 'center' },
-          7: { cellWidth: 'auto' },
-        },
-        didParseCell: (data) => {
-          if (data.column.index === 0 && data.section === 'body') {
-            data.cell.styles.fillColor = [22, 163, 74];
-            data.cell.styles.textColor = [255, 255, 255];
-            data.cell.styles.fontStyle = 'bold';
-            data.cell.styles.halign = 'left';
-            const type = resolveEquipmentImage(filtered[data.row.index]);
-            if(type && equipmentMedia.has(type.key)) { data.cell.styles.cellPadding = {top:3,right:2,bottom:3,left:17}; data.cell.styles.minCellHeight=15; }
-          }
-          if (data.column.index === 6 && data.section === 'body') {
-            const val = data.cell.text[0] as StatusType;
-            const st = STATUS_STYLE[val];
-            if (st) {
-              data.cell.styles.fillColor = st.rgb;
-              data.cell.styles.textColor = st.textRgb;
-              data.cell.styles.fontStyle = 'bold';
-            }
-          }
-          if (data.column.index === 7 && data.section === 'body') {
-            const obs = data.cell.text[0];
-            if (obs && obs !== '—') {
-              data.cell.styles.fillColor = [254, 243, 199];
-              data.cell.styles.textColor = [146, 64, 14];
-              data.cell.styles.fontStyle = 'bold';
-            }
-          }
-        },
-        didDrawCell: (data) => {
-          if(data.section!=='body' || data.column.index!==0 || equipmentDrawnRows.has(data.row.index)) return;
-          const type=resolveEquipmentImage(filtered[data.row.index]); const media=type?equipmentMedia.get(type.key):undefined;
-          if(!media || data.cell.height<8) return;
-          const ratio=Math.min(13/media.width,Math.min(10,data.cell.height-2)/media.height);
-          doc.addImage(media.dataUrl,'PNG',data.cell.x+2,data.cell.y+(data.cell.height-media.height*ratio)/2,media.width*ratio,media.height*ratio);
-          equipmentDrawnRows.add(data.row.index);
-        },
-        margin: { left: 8, right: 8, top: 50 },
-        didDrawPage: () => {
-          drawHeader(false);
-          const totalPgs = (doc as any).internal.getNumberOfPages();
-          const curPg = (doc as any).internal.getCurrentPageInfo().pageNumber;
-
-          doc.setFillColor(...th.pdfFooterRgb);
-          doc.rect(0, pageH - 8, pageW, 8, 'F');
-          doc.setFillColor(...th.pdfAccentRgb);
-          doc.rect(0, pageH - 8, 3, 8, 'F');
-
-          doc.setFontSize(7);
-          doc.setTextColor(...th.pdfTableHeaderTextRgb);
-          doc.setFont('helvetica', 'normal');
-          doc.text(
-            `BRANCO PERES Agro  ·  Controle de Lavagem e Lubrificação  ·  ${format(now, 'yyyy')}   |   Pág. ${curPg}/${totalPgs}   |   ${stats.total} registros`,
-            pageW / 2, pageH - 3, { align: 'center' }
-          );
-        },
-      });
-
-      const totalPgs = (doc as any).internal.getNumberOfPages();
-      for (let p = 1; p <= totalPgs; p++) {
-        doc.setPage(p);
-        doc.setFillColor(...th.pdfHeaderRgb2);
-        doc.rect(pageW - 50, 0, 50, 24, 'F');
-        doc.setTextColor(...th.pdfTableHeaderTextRgb);
-        doc.setFontSize(7.5); doc.setFont('helvetica', 'normal');
-        doc.text(`Pág. ${p}/${totalPgs}`, pageW - 6, 11, { align: 'right' });
-      }
 
       if (getDailyExportWindowKey(new Date()) !== getDailyExportWindowKey(now)) {
         setClock(Date.now());
         throw new Error('A janela operacional mudou durante a geração. Gere o PDF novamente.');
       }
-      doc.save(`branco-peres-${reportMode}-${exportTheme}-${format(now, 'dd-MM-yyyy')}.pdf`);
+
+      const apoioLabels = Object.fromEntries(apoioOptions);
+      const { pageCount } = await exportLubricationStructuredPdf({
+        rows: filtered,
+        stats,
+        theme: THEMES[exportTheme],
+        layout: pdfLayout,
+        now,
+        reportMode,
+        filterDescriptor: {
+          statusFilter,
+          pcmFilters,
+          apoioLabels,
+        },
+      });
+
+      const layoutLabel = pdfLayout === 'detalhado' ? 'Detalhado' : 'Simplificado';
       const filterInfo = filtered.length < schedules.length ? ` (filtrados de ${schedules.length})` : '';
-      setGenSuccess(`PDF gerado com ${filtered.length} registros${filterInfo} em ${totalPgs} página(s)`);
+      setGenSuccess(`PDF ${layoutLabel} gerado com ${filtered.length} registros${filterInfo} em ${pageCount} página(s)`);
     } catch (err: any) {
       setGenError(`Erro ao gerar PDF: ${err.message}`);
     } finally { setGeneratingPdf(false); }
@@ -1466,10 +1309,10 @@ export default function Exportar({ schedules }: Props) {
       </div>
 
       <div className={`px-4 py-3 rounded-xl text-sm border ${isDark ? 'bg-green-950/30 border-green-800 text-green-200' : 'bg-green-50 border-green-200 text-green-900'}`}>
-        <strong>Relatório operacional + encerradas da janela das07:00</strong>
+        <strong>Relatório operacional + encerradas da janela das 07:00</strong>
         <p className="mt-1">Atrasadas de datas anteriores, serviços em andamento e programações de <strong>{formatDate(dailyWindow.today)}</strong> até <strong>{formatDate(dailyWindow.nextDay)} às {dailyWindow.hideClosed ? '07:00' : '07:10'}</strong>, inclusive. Horário de Brasília.</p>
-        <p className="mt-1 text-xs"><strong>Encerradas também entram:</strong> ordens encerradas desde as07:00 de <strong>{closedWindowStart ? formatDate(closedWindowStart.toISOString().slice(0,10)) : formatDate(dailyWindow.today)}</strong> (início desta janela operacional atual) até o horário da geração, em Brasília, respeitando os filtros abaixo. Se o relatório for gerado antes das07:00, a janela começou às07:00 do dia anterior e continua após a meia-noite. A ocultação na tela e o corte das 07:10 não removem encerradas do relatório. Escolha Situação: Encerrado para exportar somente elas. PCM usa o horário de detecção de encerramento; registros manuais legados usam a data realizada e o horário registrado na programação.</p>
-        <p className="mt-1 text-xs">Ordens abertas de datas posteriores ao limite e pendentes não entram. Encerradas anteriores ao início desta janela operacional não entram. Antes das07:00, o início é às07:00 do dia anterior; às07:00 a janela reinicia. A tela de controle continua mostrando as programações dos demais dias. Programados antigos aparecem como atrasados somente no arquivo; o banco não é alterado. Para incluir lançamentos manuais, escolha Origem: Todas.</p>
+        <p className="mt-1 text-xs"><strong>Encerradas também entram:</strong> ordens encerradas desde as 07:00 de <strong>{closedWindowStart ? formatDate(closedWindowStart.toISOString().slice(0,10)) : formatDate(dailyWindow.today)}</strong> (início desta janela operacional atual) até o horário da geração, em Brasília, respeitando os filtros abaixo. Se o relatório for gerado antes das 07:00, a janela começou às 07:00 do dia anterior e continua após a meia-noite. A ocultação na tela e o corte das 07:10 não removem encerradas do relatório. Escolha Situação: Encerrado para exportar somente elas. PCM usa o horário de detecção de encerramento; registros manuais legados usam a data realizada e o horário registrado na programação.</p>
+        <p className="mt-1 text-xs">Ordens abertas de datas posteriores ao limite e pendentes não entram. Encerradas anteriores ao início desta janela operacional não entram. Antes das 07:00, o início é às 07:00 do dia anterior; às 07:00 a janela reinicia. A tela de controle continua mostrando as programações dos demais dias. Programados antigos aparecem como atrasados somente no arquivo; o banco não é alterado. Para incluir lançamentos manuais, escolha Origem: Todas.</p>
       </div>
 
       {/* Painel de controles */}
@@ -1559,6 +1402,53 @@ export default function Exportar({ schedules }: Props) {
           )}
         </div>
 
+        {/* Layout do PDF */}
+        <div>
+          <label className={`text-xs font-semibold flex items-center gap-1.5 mb-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            <FileText size={13} /> Layout do PDF Estruturado
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {PDF_LAYOUT_OPTIONS.map((option) => {
+              const selected = pdfLayout === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => {
+                    setPdfLayout(option.id);
+                    saveStoredPdfLayout(option.id);
+                    setGenSuccess(null);
+                  }}
+                  className={`flex items-start justify-between gap-3 px-4 py-3 rounded-xl text-left border-2 transition-all ${
+                    selected
+                      ? isDark
+                        ? 'border-[var(--brand-green)] bg-[var(--bg-tertiary)] shadow-lg'
+                        : 'border-emerald-600 bg-emerald-50 shadow-sm'
+                      : isDark
+                        ? 'border-white/10 hover:border-white/25 bg-[var(--bg-tertiary)]/60'
+                        : 'border-gray-200 hover:border-gray-300 bg-white'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className={`text-xs font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      {option.label}
+                    </div>
+                    <div className={`text-[11px] mt-0.5 leading-snug ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                      {option.description}
+                    </div>
+                  </div>
+                  {selected && (
+                    <span className={`text-xs font-bold shrink-0 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                      ✓
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Botões de ação */}
         <div className="flex flex-wrap gap-3">
           <button
@@ -1575,7 +1465,7 @@ export default function Exportar({ schedules }: Props) {
             className="flex items-center gap-2 px-5 py-2.5 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 disabled:opacity-50 transition-all shadow-md hover:shadow-red-500/30"
           >
             <FileText size={15} className={generatingPdf ? 'animate-pulse' : ''} />
-            {generatingPdf ? 'Gerando…' : 'Gerar PDF'}
+            {generatingPdf ? 'Gerando…' : `Gerar PDF (${pdfLayout === 'detalhado' ? 'Detalhado' : 'Simplificado'})`}
           </button>
           <button
             onClick={shareWhatsApp}

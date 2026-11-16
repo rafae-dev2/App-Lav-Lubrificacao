@@ -5,6 +5,7 @@ import { ApoioData, ApoioReportRow, oficinaLabel } from '../types/apoio';
 import { defaultTVFilters, isEmergencyOrder, selectTVOrders, selectTVExternalOrders, TVFilters, tvDateTimestamp, tvDeadlineState } from '../lib/tvOrders';
 import {getTVLayout} from '../lib/tvLayout';
 import EquipmentThumbnail from './EquipmentThumbnail';
+import AmbientBrandWatermark from './AmbientBrandWatermark';
 import '../styles/tv-monitor.css';
 
 export interface TVMonitorProps {
@@ -219,6 +220,7 @@ export default function TVMonitor(props: TVMonitorProps) {
     return Math.max(10,Math.min(maximum,Math.floor(track/(Math.max(1,String(value).length)*.72))));
   };
   const board = <div ref={monitorRef} className={`tv-monitor ${presenting ? 'tv-monitor--presenting' : ''}`} data-page-size={pageSize} data-density={density} data-columns={layout.columns} style={{'--tv-columns':layout.columns,'--tv-grid-rows':gridRows} as React.CSSProperties} data-tv-theme={config.theme} data-panel={activePanel}>
+    {isPresentation && <AmbientBrandWatermark variant="tv" />}
     <header className="tv-topbar">
       <div className="tv-brand"><img src="/logo.png" alt="Branco Peres Agro"/><div><span className="tv-eyebrow">Centro de acompanhamento · Gerência</span><h2>{isExternal ? 'Ordens externas do Apoio' : 'Monitor de emergências'}<span className="tv-title-dot"/></h2><p>{scope}</p></div></div>
       <div className="tv-topbar-right"><span className={`tv-connection ${sourceBad || syncError || props.connection === 'offline' || delayed || props.connection === 'polling' ? 'is-warning' : ''}`}><span/>{connectionLabel}</span><time>{new Intl.DateTimeFormat('pt-BR', {timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(clock)}<small>Brasília</small></time></div>

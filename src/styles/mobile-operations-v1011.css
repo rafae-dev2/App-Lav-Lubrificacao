@@ -81,7 +81,13 @@
   gap: 12px;
 }
 .apoio-operations-v1011 .apoio-recency-panel {
+  display: grid;
+  gap: 12px;
   min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border-primary);
+  border-radius: 14px;
+  background: var(--bg-card);
 }
 .apoio-operations-v1011 .apoio-recency-panel .apoio-panel-heading {
   align-items: flex-start;
@@ -93,10 +99,26 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  margin-bottom: 12px;
+  margin-bottom: 4px;
+}
+.apoio-operations-v1011 .apoio-recency-panel .apoio-recency-shortcuts button {
+  white-space: normal;
+  text-align: left;
+  min-height: 42px;
+  line-height: 1.3;
 }
 .apoio-operations-v1011 .apoio-recency-panel .apoio-recency-fields > * {
   min-width: 0;
+}
+.apoio-operations-v1011 .apoio-recency-error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(248, 113, 113, 0.36);
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.4;
 }
 .apoio-operations-v1011 .mt-status-tabs {
   display: flex;
@@ -236,7 +258,10 @@
   .apoio-operations-v1011 .apoio-direct-count { grid-column: auto; }
   .apoio-operations-v1011 .apoio-multiselect-grid,
   .apoio-operations-v1011 .apoio-recency-fields { grid-template-columns: minmax(0, 1fr); }
-  .apoio-operations-v1011 .apoio-filter-center .mt-filter-body { padding: 14px; }
+  .apoio-operations-v1011 .apoio-filter-center > summary { flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
+  .apoio-operations-v1011 .apoio-filter-center .mt-filter-body { padding: 10px !important; gap: 12px; }
+  .apoio-operations-v1011 .apoio-filter-center .apoio-order-filters { padding: 12px !important; gap: 12px; }
+  .apoio-operations-v1011 .apoio-recency-panel { padding: 12px !important; gap: 10px; }
   .apoio-operations-v1011 .mt-status-tabs { gap: 6px; }
   .apoio-operations-v1011 .mt-status-tabs button { min-height: 40px; padding: 7px 10px; }
   .lub-operations-v1011 .lub-schedule-cards { grid-template-columns: minmax(0, 1fr); padding: 10px; }

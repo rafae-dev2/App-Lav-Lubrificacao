@@ -1,46 +1,101 @@
 import html2canvas from 'html2canvas';
+import * as XLSX from 'xlsx';
+import type { ApoioReportRow } from '../types/apoio';
+import { downloadIllustratedExcel } from './equipmentExcel';
 import { reportDate } from './apoioReportData';
+import { createLogoWatermarkDataUrl } from './reportWatermark';
 import {
+  buildOficinaTerceirosExcelData,
+  OFICINA_REPORT_FORMATS,
   OFICINA_TERCEIROS_IMAGE,
-  OFICINA_TERCEIROS_TITLE,
+  normalizeOficinaFormat,
+  normalizeOficinaQuality,
+  oficinaReportFilenameBase,
+  oficinaReportTitle,
+  oficinaTerceirosSummary,
+  resolveOficinaRenderDimensions,
+  type OficinaReportFormat,
+  type OficinaReportQuality,
   type OficinaTerceirosEntry,
+  type OficinaTerceirosScope,
 } from './apoioOficinaTerceirosData';
 
 /**
- * Relatório em imagem "Equipamentos em Oficina de Terceiros".
+ * Relatório em imagem "Equipamentos em Oficina de Terceiros" (e variações
+ * com emergenciais em Oficina Interna / Campo, separado ou junto).
  *
- * Composição própria, separada do relatório premium: uma única imagem PNG de
- * celular em pé, com 921 px de largura e pelo menos 1600 px de altura. Quando
- * a seleção não cabe em 1600 px a imagem cresce, em vez de virar ZIP ou
- * cortar registros. Cabeçalho verde no estilo do PDF e apenas três colunas
- * (Equipamento, Modelo e Prestador). Nada é lido ou gravado na fonte.
+ * Suporta modos Celular (921 px), Tablet (1240 px) e Computador (1680 px)
+ * com controle de qualidade de renderização (Padrão 1×, Alta 2×, Ultra).
+ * Quando nenhuma opção é informada, preserva o padrão 921 × 1600 px (1×).
  */
 export interface OficinaTerceirosOptions {
   /** Cores dos grupos Apoio (nome → cor) usadas como identificação da linha. */
   groupColors?: Record<string, string>;
   generatedAt?: Date;
+  scope?: OficinaTerceirosScope;
+  format?: OficinaReportFormat;
+  quality?: OficinaReportQuality;
 }
 export interface OficinaTerceirosProgress { phase: string; current: number; total: number; }
 
 const PAGE_W = OFICINA_TERCEIROS_IMAGE.width;
 const PAGE_H = OFICINA_TERCEIROS_IMAGE.height;
-/** Limite de altura da imagem única (~70 linhas) para não travar o celular. */
+/** Limite de altura da imagem única (~70 linhas) para não travar o navegador. */
 export const OFICINA_TERCEIROS_MAX_HEIGHT = 12000;
-const PADDING = 34;
+const PADDING = 32;
 const GREEN = '#1F6B45';
 const DARK = '#14482F';
-const BORDER = '#CFE5D7';
-const INK = '#1B2A22';
-const MUTED = '#5F7268';
+const EMERALD_ACCENT = '#34D399';
+const AMBER = '#B45309';
+const BORDER = '#C8E1D2';
+const INK = '#15241C';
+const MUTED = '#50675B';
 const FONT = 'Arial, Helvetica, sans-serif';
-// Mesmo fundo vetorial com blur do cabeçalho premium do Apoio.
-const BACKGROUND = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#14482F"/><stop offset=".55" stop-color="#1F6B45"/><stop offset="1" stop-color="#2E8B57"/></linearGradient><filter id="b"><feGaussianBlur stdDeviation="48"/></filter></defs><rect width="1280" height="320" fill="url(#g)"/><g filter="url(#b)" opacity=".38"><ellipse cx="1020" cy="40" rx="235" ry="160" fill="#B1EBC9"/><ellipse cx="380" cy="290" rx="250" ry="160" fill="#2E8B57"/></g></svg>`);
 
-const COLUMNS = [
-  { key: 'frota', label: 'Equipamento', width: '18%' },
-  { key: 'modelo', label: 'Modelo', width: '39%' },
-  { key: 'prestador', label: 'Prestador', width: '43%' },
-] as const;
+// Fundo vetorial executivo para o cabeçalho (preserva o verde profundo nos cantos do logotipo).
+const BACKGROUND = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360">` +
+  `<defs>` +
+  `<linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0E3723"/><stop offset=".48" stop-color="#1A5C3B"/><stop offset="1" stop-color="#277A50"/></linearGradient>` +
+  `<filter id="b"><feGaussianBlur stdDeviation="46"/></filter>` +
+  `<pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M 32 0 L 0 0 0 32" fill="none" stroke="rgba(255,255,255,0.045)" stroke-width="1"/></pattern>` +
+  `</defs>` +
+  `<rect width="1280" height="360" fill="url(#g)"/>` +
+  `<rect width="1280" height="360" fill="url(#grid)"/>` +
+  `<g filter="url(#b)" opacity=".36"><ellipse cx="1060" cy="40" rx="250" ry="155" fill="#A7F3D0"/><ellipse cx="420" cy="310" rx="260" ry="155" fill="#2E8B57"/></g>` +
+  `<circle cx="1160" cy="70" r="175" fill="none" stroke="rgba(167,243,208,0.14)" stroke-width="2"/>` +
+  `<circle cx="1160" cy="70" r="128" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1.5" stroke-dasharray="8 6"/>` +
+  `</svg>`,
+);
+
+interface TableColumnSpec {
+  key: 'frota' | 'modelo' | 'prestador' | 'categoria';
+  label: string;
+  width: string;
+}
+
+function columnsForLayout(scope: OficinaTerceirosScope, format: OficinaReportFormat): readonly TableColumnSpec[] {
+  if (format === 'computador') {
+    if (scope !== 'externa') {
+      return [
+        { key: 'frota', label: 'Equipamento', width: '17%' },
+        { key: 'modelo', label: 'Modelo', width: '30%' },
+        { key: 'prestador', label: 'Prestador / Local', width: '34%' },
+        { key: 'categoria', label: 'Tipo de Atendimento', width: '19%' },
+      ];
+    }
+    return [
+      { key: 'frota', label: 'Equipamento', width: '19%' },
+      { key: 'modelo', label: 'Modelo', width: '36%' },
+      { key: 'prestador', label: 'Prestador', width: '45%' },
+    ];
+  }
+  return [
+    { key: 'frota', label: 'Equipamento', width: '21%' },
+    { key: 'modelo', label: 'Modelo', width: '36%' },
+    { key: 'prestador', label: scope === 'externa' ? 'Prestador' : 'Prestador / Local', width: '43%' },
+  ];
+}
 
 function node<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -66,191 +121,501 @@ function tint(color: string | undefined, alpha: number): string | null {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function solidColor(color: string | undefined, fallback: string): string {
+  const value = String(color ?? '').trim();
+  return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value) ? value : fallback;
+}
+
 function logoElement(size: number): HTMLImageElement {
-  // O logotipo já é um PNG com fundo transparente: no cabeçalho ele aparece
-  // direto sobre o verde, sem a caixa branca, como no PDF premium.
+  // Logotipo transparente direto sobre o gradiente esmeralda (sem caixa branca).
   const logo = node('img', {
     width: `${size}px`,
     height: `${size}px`,
     objectFit: 'contain',
     flexShrink: '0',
-    filter: 'drop-shadow(0 6px 14px rgba(0,0,0,.28))',
+    filter: 'drop-shadow(0 8px 18px rgba(0,0,0,.32))',
   });
   logo.src = new URL('/logo.png', window.location.href).href;
   logo.alt = 'Branco Peres Agro';
   return logo;
 }
 
+function buildKpiCards(entries: readonly OficinaTerceirosEntry[], scope: OficinaTerceirosScope) {
+  if (scope === 'emergencia') {
+    const interna = entries.filter(e => e.categoria === 'emergencial_interna').length;
+    const campo = entries.filter(e => e.categoria === 'emergencial_campo').length;
+    return [
+      { label: 'Total Emergencial', value: String(entries.length), accent: AMBER, tint: 'rgba(255, 251, 235, 0.88)' },
+      { label: 'Oficina Interna', value: String(interna), accent: GREEN, tint: 'rgba(255, 255, 255, 0.86)' },
+      { label: 'Atendimento Campo', value: String(campo), accent: '#0F766E', tint: 'rgba(255, 255, 255, 0.86)' },
+    ];
+  }
+  if (scope === 'juntos') {
+    const terceiros = entries.filter(e => e.categoria !== 'emergencial_interna' && e.categoria !== 'emergencial_campo').length;
+    const emergenciais = entries.length - terceiros;
+    return [
+      { label: 'Total Consolidado', value: String(entries.length), accent: DARK, tint: 'rgba(240, 253, 244, 0.88)' },
+      { label: 'Oficina de Terceiros', value: String(terceiros), accent: GREEN, tint: 'rgba(255, 255, 255, 0.86)' },
+      { label: 'Emergenciais (Int. / Campo)', value: String(emergenciais), accent: AMBER, tint: 'rgba(255, 251, 235, 0.88)' },
+    ];
+  }
+  // Para 'externa', nunca mencionar "Oficina Interna" ou "Campo" nos rótulos.
+  const oficinas = new Set(entries.map(e => e.prestador.toLocaleLowerCase('pt-BR'))).size;
+  const grupos = new Set(entries.map(e => e.grupo).filter(Boolean)).size;
+  return [
+    { label: 'Equipamentos Parados', value: String(entries.length), accent: DARK, tint: 'rgba(240, 253, 244, 0.88)' },
+    { label: 'Oficinas Terceiras', value: String(oficinas), accent: GREEN, tint: 'rgba(255, 255, 255, 0.86)' },
+    { label: 'Grupos de Frota', value: String(grupos || 1), accent: '#047857', tint: 'rgba(255, 255, 255, 0.86)' },
+  ];
+}
+
+function scopeBadgeText(scope: OficinaTerceirosScope): string {
+  if (scope === 'emergencia') return 'ATENDIMENTO EMERGENCIAL';
+  if (scope === 'juntos') return 'VISÃO CONSOLIDADA';
+  return 'MANUTENÇÃO EXTERNA';
+}
+
+function entryCategoryTag(entry: OficinaTerceirosEntry): string {
+  if (entry.categoria === 'emergencial_interna') return 'Emergencial · Oficina Interna';
+  if (entry.categoria === 'emergencial_campo') return 'Emergencial · Campo';
+  return 'Oficina Externa';
+}
+
 export interface OficinaTerceirosLayout {
   root: HTMLDivElement;
   page: HTMLDivElement;
-  /** Altura final da imagem: 1600 px ou o necessário para caber a seleção. */
+  width: number;
+  /** Altura final da imagem em CSS px. */
   height: number;
+  format: OficinaReportFormat;
   destroy: () => void;
 }
 
 /**
- * Monta a imagem única. A tabela ocupa toda a seleção; a página só cresce em
- * altura quando as linhas passam de 1600 px.
+ * Monta a imagem única com acabamento executivo e marca d'água transparente do
+ * logotipo da empresa atrás do relatório nos formatos Celular, Tablet ou Computador.
  */
 export async function buildOficinaTerceirosPage(
   entries: readonly OficinaTerceirosEntry[],
   options: OficinaTerceirosOptions = {},
 ): Promise<OficinaTerceirosLayout> {
   if (!entries.length) throw new Error('Nenhum equipamento marcado para o relatório.');
+  const scope: OficinaTerceirosScope = options.scope ?? 'externa';
+  const format: OficinaReportFormat = normalizeOficinaFormat(options.format);
+  const spec = OFICINA_REPORT_FORMATS[format];
+  const pageWidth = spec.width ?? PAGE_W;
+  const pageMinHeight = spec.minHeight ?? PAGE_H;
+  const paddingX = format === 'computador' ? 42 : format === 'tablet' ? 38 : PADDING;
+  const paddingY = format === 'computador' ? 32 : format === 'tablet' ? 36 : PADDING;
+  const isWide = format === 'computador';
+  const isTablet = format === 'tablet';
+
   const generated = reportDate((options.generatedAt ?? new Date()).toISOString(), true);
-  const oficinas = new Set(entries.map(entry => entry.prestador.toLocaleLowerCase('pt-BR'))).size;
+  const columns = columnsForLayout(scope, format);
+  const summaryMeta = oficinaTerceirosSummary(entries, scope);
+  const watermarkAsset = await createLogoWatermarkDataUrl('/logo.png', {
+    alpha: 0.135,
+    size: isWide ? 620 : isTablet ? 600 : 560,
+    withFrameRings: true,
+    ringColor: 'rgba(20, 72, 47, 0.15)',
+  });
+
   const root = node('div', {
     position: 'fixed',
     left: '-20000px',
     top: '0',
-    width: `${PAGE_W}px`,
+    width: `${pageWidth}px`,
     pointerEvents: 'none',
     zIndex: '-1',
   });
   document.body.append(root);
 
   const page = node('div', {
-    width: `${PAGE_W}px`,
-    minHeight: `${PAGE_H}px`,
+    position: 'relative',
+    width: `${pageWidth}px`,
+    minHeight: `${pageMinHeight}px`,
     boxSizing: 'border-box',
-    padding: `${PADDING}px`,
+    padding: `${paddingY}px ${paddingX}px`,
     display: 'flex',
     flexDirection: 'column',
-    gap: '18px',
-    background: '#F5F9F6',
+    gap: isWide ? '18px' : '18px',
+    background: 'linear-gradient(180deg, #F3F8F5 0%, #EAF3ED 52%, #F5FAF7 100%)',
     color: INK,
     fontFamily: FONT,
   });
 
+  // Cabeçalho executivo em camadas
   const header = node('header', {
+    position: 'relative',
+    zIndex: '2',
     flexShrink: '0',
-    borderRadius: '26px',
+    borderRadius: '24px',
+    overflow: 'hidden',
     backgroundImage: `url("${BACKGROUND}")`,
     backgroundSize: 'cover',
     backgroundColor: GREEN,
     color: '#FFFFFF',
-    border: '1px solid rgba(255,255,255,.32)',
-    boxShadow: '0 10px 28px rgba(20,72,47,.18)',
-    padding: '30px',
+    border: '1px solid rgba(255,255,255,.26)',
+    boxShadow: '0 14px 34px rgba(14,55,35,.22)',
+    padding: isWide ? '24px 34px 22px' : isTablet ? '28px 34px 26px' : '28px 30px 26px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '20px',
+    gap: isWide ? '14px' : '18px',
+  });
+
+  // Filete superior metálico-esmeralda
+  header.append(node('div', {
+    position: 'absolute',
+    top: '0',
+    left: '0',
+    right: '0',
+    height: '4px',
+    background: 'linear-gradient(90deg, #34D399 0%, #A7F3D0 50%, #10B981 100%)',
+  }));
+
+  const topRow = node('div', {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '16px',
   });
   const brand = node('div', { display: 'flex', alignItems: 'center', gap: '18px', minWidth: '0' });
-  brand.append(logoElement(92));
+  brand.append(logoElement(isWide ? 82 : isTablet ? 94 : 90));
   const brandText = node('div', { minWidth: '0' });
-  brandText.append(node('div', { fontSize: '15px', letterSpacing: '2.6px', fontWeight: '700', opacity: '.92' }, 'BRANCO PERES AGRO'));
-  brandText.append(node('div', { fontSize: '16px', marginTop: '6px', opacity: '.9' }, 'Controle de Equipamentos — Apoio'));
+  brandText.append(node('div', {
+    fontSize: '16px',
+    letterSpacing: '2.8px',
+    fontWeight: '700',
+    color: '#FFFFFF',
+  }, 'BRANCO PERES AGRO'));
+  brandText.append(node('div', {
+    fontSize: '15px',
+    marginTop: '5px',
+    color: 'rgba(236, 253, 245, 0.90)',
+  }, 'Controle de Equipamentos — Apoio'));
   brand.append(brandText);
-  header.append(brand);
+
+  const scopeBadge = node('div', {
+    flexShrink: '0',
+    padding: '8px 14px',
+    borderRadius: '10px',
+    background: 'rgba(10, 40, 25, 0.42)',
+    border: '1px solid rgba(167, 243, 208, 0.35)',
+    fontSize: '11px',
+    fontWeight: '700',
+    letterSpacing: '1.6px',
+    color: '#BDF6CF',
+    textTransform: 'uppercase',
+  }, scopeBadgeText(scope));
+
+  topRow.append(brand, scopeBadge);
+  header.append(topRow);
 
   const titleBlock = node('div', { minWidth: '0' });
-  titleBlock.append(node('div', { fontSize: '12px', letterSpacing: '2.4px', fontWeight: '700', color: '#BDF6CF' }, 'RELATÓRIO DE MANUTENÇÃO'));
-  titleBlock.append(node('h1', {
-    fontSize: '38px',
-    lineHeight: '1.12',
+  titleBlock.append(node('div', {
+    fontSize: '11px',
+    letterSpacing: '2.6px',
     fontWeight: '700',
-    margin: '10px 0 0',
+    color: '#A7F3D0',
+    textTransform: 'uppercase',
+  }, 'RELATÓRIO DE MANUTENÇÃO'));
+  titleBlock.append(node('h1', {
+    fontSize: '32px',
+    lineHeight: '1.15',
+    fontWeight: '700',
+    margin: '8px 0 0',
     letterSpacing: '-.4px',
     textTransform: 'uppercase',
-  }, OFICINA_TERCEIROS_TITLE));
+    color: '#FFFFFF',
+  }, oficinaReportTitle(scope)));
   header.append(titleBlock);
-  const meta = node('div', { display: 'flex', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap', fontSize: '15px', opacity: '.94' });
-  meta.append(node('span', {}, `Gerado em ${generated}`));
-  meta.append(node('span', {}, `${entries.length} ${entries.length === 1 ? 'equipamento' : 'equipamentos'} · ${oficinas} ${oficinas === 1 ? 'oficina' : 'oficinas'}`));
+
+  const meta = node('div', {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '12px',
+    flexWrap: 'wrap',
+    padding: '11px 16px',
+    borderRadius: '12px',
+    background: 'rgba(9, 34, 21, 0.36)',
+    border: '1px solid rgba(255, 255, 255, 0.14)',
+    fontSize: '14px',
+    color: 'rgba(240, 253, 244, 0.96)',
+  });
+  meta.append(node('span', { fontWeight: '600' }, `Gerado em ${generated}`));
+  meta.append(node('span', { fontWeight: '700', color: '#D1FAE5' }, summaryMeta));
   header.append(meta);
 
-  const body = node('div', { flex: '1 0 auto', display: 'flex', flexDirection: 'column' });
+  // Área principal com camada de marca d'água transparente do logotipo atrás dos cards e tabela
+  const body = node('div', {
+    position: 'relative',
+    flex: '1 0 auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  });
+
+  if (watermarkAsset.dataUrl) {
+    const watermarkCount = Math.max(1, Math.min(4, Math.floor(entries.length / 16) + 1));
+    const watermarkLayer = node('div', {
+      position: 'absolute',
+      inset: '0',
+      overflow: 'hidden',
+      pointerEvents: 'none',
+      zIndex: '0',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: watermarkCount === 1 ? 'center' : 'space-evenly',
+      padding: '32px 0',
+    });
+    for (let w = 0; w < watermarkCount; w += 1) {
+      const wmImg = node('img', {
+        width: watermarkCount === 1 ? '540px' : '460px',
+        height: watermarkCount === 1 ? '540px' : '460px',
+        objectFit: 'contain',
+        userSelect: 'none',
+        flexShrink: '0',
+      });
+      wmImg.src = watermarkAsset.dataUrl;
+      wmImg.alt = '';
+      watermarkLayer.append(wmImg);
+    }
+    body.append(watermarkLayer);
+  }
+
+  // Faixa de KPIs executivos
+  const kpiCards = buildKpiCards(entries, scope);
+  const kpiStrip = node('div', {
+    position: 'relative',
+    zIndex: '1',
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: '12px',
+    flexShrink: '0',
+  });
+  kpiCards.forEach((kpi) => {
+    const card = node('div', {
+      position: 'relative',
+      overflow: 'hidden',
+      borderRadius: '14px',
+      border: `1px solid ${BORDER}`,
+      background: kpi.tint,
+      padding: '14px 16px 13px',
+      boxShadow: '0 4px 14px rgba(20, 72, 47, 0.05)',
+    });
+    card.append(node('div', {
+      position: 'absolute',
+      top: '0',
+      left: '0',
+      right: '0',
+      height: '3px',
+      background: kpi.accent,
+    }));
+    card.append(node('div', {
+      fontSize: '28px',
+      lineHeight: '1.1',
+      fontWeight: '700',
+      color: kpi.accent,
+      fontVariantNumeric: 'tabular-nums',
+    }, kpi.value));
+    card.append(node('div', {
+      marginTop: '4px',
+      fontSize: '12px',
+      fontWeight: '700',
+      letterSpacing: '.4px',
+      textTransform: 'uppercase',
+      color: MUTED,
+    }, kpi.label));
+    kpiStrip.append(card);
+  });
+  body.append(kpiStrip);
+
+  // Tabela translúcida para a marca d'água do logotipo permanecer sutilmente visível atrás do relatório
   const table = node('div', {
+    position: 'relative',
+    zIndex: '1',
     borderRadius: '18px',
     overflow: 'hidden',
     border: `1px solid ${BORDER}`,
-    background: '#FFFFFF',
-    boxShadow: '0 6px 18px rgba(20,72,47,.05)',
+    background: 'rgba(255, 255, 255, 0.42)',
+    boxShadow: '0 10px 26px rgba(20,72,47,.07)',
     flexShrink: '0',
   });
-  const head = node('div', { display: 'flex', background: GREEN, color: '#FFFFFF' });
-  COLUMNS.forEach(column => {
+
+  const head = node('div', {
+    display: 'flex',
+    background: `linear-gradient(90deg, ${DARK} 0%, ${GREEN} 60%, #24784E 100%)`,
+    color: '#FFFFFF',
+    borderBottom: `2px solid ${EMERALD_ACCENT}`,
+  });
+  columns.forEach(column => {
     head.append(node('div', {
       width: column.width,
       flexShrink: '0',
       boxSizing: 'border-box',
-      padding: '16px 12px',
+      padding: '15px 14px',
       fontSize: '13px',
       fontWeight: '700',
-      letterSpacing: '.3px',
+      letterSpacing: '.6px',
       textTransform: 'uppercase',
       whiteSpace: 'nowrap',
     }, column.label));
   });
+
   const tbody = node('div', { display: 'flex', flexDirection: 'column' });
   entries.forEach((entry, index) => {
-    const background = tint(options.groupColors?.[entry.grupo], .16)
-      ?? (index % 2 ? '#F2F8F4' : '#FFFFFF');
+    const isEmergencyEntry = entry.categoria === 'emergencial_interna' || entry.categoria === 'emergencial_campo';
+    const rawGroupColor = options.groupColors?.[entry.grupo];
+    const railColor = isEmergencyEntry ? '#D97706' : solidColor(rawGroupColor, GREEN);
+    const background = tint(rawGroupColor, 0.085)
+      ?? (isEmergencyEntry
+        ? 'rgba(255, 247, 237, 0.62)'
+        : index % 2
+          ? 'rgba(240, 249, 244, 0.50)'
+          : 'rgba(255, 255, 255, 0.48)');
+
     const row = node('div', {
+      position: 'relative',
       display: 'flex',
       alignItems: 'center',
       background,
       borderTop: index ? `1px solid ${BORDER}` : 'none',
+      borderLeft: `5px solid ${railColor}`,
+      boxSizing: 'border-box',
       flexShrink: '0',
     });
     row.dataset.oficinaTerceirosRow = 'true';
-    const cells = [
-      { text: entry.frota, fontSize: '25px', fontWeight: '700', color: DARK },
-      { text: entry.modelo, fontSize: '21px', fontWeight: '400', color: INK },
-      { text: entry.prestador, fontSize: '20px', fontWeight: '400', color: '#2C4A3A' },
-    ];
-    cells.forEach((cell, column) => {
-      row.append(node('div', {
-        width: COLUMNS[column].width,
+
+    const cellPad = isWide ? '13px 16px' : isTablet ? '15px 16px' : '14px 12px';
+
+    // Coluna 1: Equipamento + sub-rótulo do grupo
+    const col1 = node('div', {
+      width: columns[0].width,
+      flexShrink: '0',
+      boxSizing: 'border-box',
+      padding: cellPad,
+    });
+    col1.append(node('div', {
+      fontSize: isWide ? '22px' : isTablet ? '25px' : '24px',
+      fontWeight: '700',
+      color: DARK,
+      lineHeight: '1.18',
+      fontVariantNumeric: 'tabular-nums',
+      overflowWrap: 'anywhere',
+    }, entry.frota));
+    if (entry.grupo) {
+      col1.append(node('div', {
+        marginTop: '3px',
+        fontSize: isWide ? '12px' : '12px',
+        fontWeight: '700',
+        color: MUTED,
+        lineHeight: '1.25',
+        overflowWrap: 'anywhere',
+      }, entry.grupo));
+    }
+
+    // Coluna 2: Modelo
+    const col2 = node('div', {
+      width: columns[1].width,
+      flexShrink: '0',
+      boxSizing: 'border-box',
+      padding: cellPad,
+      fontSize: isWide ? '19px' : isTablet ? '21px' : '20px',
+      fontWeight: '500',
+      color: INK,
+      lineHeight: '1.3',
+      overflowWrap: 'anywhere',
+    }, entry.modelo);
+
+    // Coluna 3: Prestador / Local (+ indicação discreta quando não houver 4ª coluna)
+    const hasFourthColumn = columns.length === 4;
+    const col3 = node('div', {
+      width: columns[2].width,
+      flexShrink: '0',
+      boxSizing: 'border-box',
+      padding: cellPad,
+    });
+    col3.append(node('div', {
+      fontSize: isWide ? '18px' : isTablet ? '20px' : '19px',
+      fontWeight: isEmergencyEntry ? '700' : '600',
+      color: isEmergencyEntry ? '#92400E' : '#1E4631',
+      lineHeight: '1.3',
+      overflowWrap: 'anywhere',
+    }, entry.prestador));
+    if (scope !== 'externa' && !hasFourthColumn) {
+      col3.append(node('div', {
+        marginTop: '3px',
+        fontSize: '12px',
+        fontWeight: '700',
+        color: isEmergencyEntry ? AMBER : GREEN,
+        letterSpacing: '.2px',
+      }, entryCategoryTag(entry)));
+    }
+
+    row.append(col1, col2, col3);
+    if (hasFourthColumn && columns[3]) {
+      const col4 = node('div', {
+        width: columns[3].width,
         flexShrink: '0',
         boxSizing: 'border-box',
-        padding: '15px 12px',
-        fontSize: cell.fontSize,
-        fontWeight: cell.fontWeight,
-        color: cell.color,
-        lineHeight: '1.32',
-        overflowWrap: 'anywhere',
-      }, cell.text));
-    });
+        padding: cellPad,
+      });
+      col4.append(node('span', {
+        display: 'inline-block',
+        padding: '6px 12px',
+        borderRadius: '999px',
+        fontSize: '13px',
+        fontWeight: '700',
+        background: isEmergencyEntry ? 'rgba(217, 119, 6, 0.14)' : 'rgba(31, 107, 69, 0.12)',
+        border: isEmergencyEntry ? '1px solid rgba(180, 83, 9, 0.32)' : '1px solid rgba(31, 107, 69, 0.25)',
+        color: isEmergencyEntry ? '#92400E' : DARK,
+      }, entryCategoryTag(entry)));
+      row.append(col4);
+    }
     tbody.append(row);
   });
   table.append(head, tbody);
   body.append(table);
 
   const footer = node('footer', {
+    position: 'relative',
+    zIndex: '2',
     flexShrink: '0',
-    height: '26px',
+    minHeight: '34px',
     boxSizing: 'border-box',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: '10px',
-    fontSize: '12px',
+    gap: '12px',
+    fontSize: '13px',
     fontWeight: '700',
     color: MUTED,
     paddingTop: '12px',
     borderTop: `1px solid ${BORDER}`,
   });
   footer.append(
-    node('span', {}, 'BRANCO PERES AGRO · MANUTENÇÃO'),
-    node('span', {}, `${entries.length} ${entries.length === 1 ? 'equipamento' : 'equipamentos'}`),
+    node('span', { letterSpacing: '.6px', color: DARK }, 'BRANCO PERES AGRO · MANUTENÇÃO'),
+    node('span', { fontVariantNumeric: 'tabular-nums', color: GREEN }, `${entries.length} ${entries.length === 1 ? 'equipamento' : 'equipamentos'}`),
   );
 
   page.append(header, body, footer);
   root.append(page);
 
   try {
-    const needed = Math.max(PAGE_H, Math.ceil(page.scrollHeight));
-    if (needed > OFICINA_TERCEIROS_MAX_HEIGHT) {
+    const maxAllowedHeight = spec.maxHeight ?? OFICINA_TERCEIROS_MAX_HEIGHT;
+    const needed = Math.max(pageMinHeight, Math.ceil(page.scrollHeight));
+    if (needed > maxAllowedHeight) {
       throw new Error('A seleção é grande demais para uma única imagem. Desmarque alguns equipamentos para manter o PNG leve.');
     }
     page.style.height = `${needed}px`;
     page.dataset.imageHeight = String(needed);
+    page.dataset.imageWidth = String(pageWidth);
+    page.dataset.imageFormat = format;
     if (document.fonts?.ready) await document.fonts.ready;
     await Promise.all(Array.from(root.querySelectorAll('img')).map(image => image.decode().catch(() => undefined)));
-    return { root, page, height: needed, destroy: () => root.remove() };
+    return { root, page, width: pageWidth, height: needed, format, destroy: () => root.remove() };
   } catch (error) {
     root.remove();
     throw error;
@@ -273,35 +638,49 @@ function localStamp(now = new Date()): string {
 }
 
 /**
- * Renderiza a imagem única exatamente na largura de 921 px e na altura da
- * página (1600 px ou mais). Retorna o PNG em memória, sem baixar nada.
+ * Renderiza a imagem única no formato e qualidade selecionados
+ * (Celular 921 px, Tablet 1240 px ou Computador 1680 px; escala 1×, 2× ou Ultra).
  */
 export async function renderOficinaTerceirosPng(
   entries: readonly OficinaTerceirosEntry[],
   options: OficinaTerceirosOptions = {},
   onProgress?: (progress: OficinaTerceirosProgress) => void,
-): Promise<{ blob: Blob; width: number; height: number }> {
-  const layout = await buildOficinaTerceirosPage(entries, options);
+): Promise<{ blob: Blob; width: number; height: number; cssWidth: number; cssHeight: number; scale: number; format: OficinaReportFormat; quality: OficinaReportQuality }> {
+  const format = normalizeOficinaFormat(options.format);
+  const quality = normalizeOficinaQuality(options.quality, 'padrao');
+  const layout = await buildOficinaTerceirosPage(entries, { ...options, format, quality });
+  const dims = resolveOficinaRenderDimensions(format, quality, layout.height);
   try {
     onProgress?.({ phase: 'Renderizando imagem', current: 1, total: 1 });
     layout.root.replaceChildren(layout.page);
     const canvas = await html2canvas(layout.page, {
-      scale: 1,
-      backgroundColor: '#F5F9F6',
+      scale: dims.scale,
+      backgroundColor: '#F3F8F5',
       logging: false,
       useCORS: true,
-      width: PAGE_W,
+      width: layout.width,
       height: layout.height,
-      windowWidth: PAGE_W,
+      windowWidth: layout.width,
       windowHeight: layout.height,
     });
+    const actualWidth = canvas.width || dims.pixelWidth;
+    const actualHeight = canvas.height || dims.pixelHeight;
     const blob = await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(value => (value ? resolve(value) : reject(new Error('Não foi possível gerar o PNG.'))), 'image/png');
     });
     canvas.width = 0;
     canvas.height = 0;
     layout.page.replaceChildren();
-    return { blob, width: PAGE_W, height: layout.height };
+    return {
+      blob,
+      width: actualWidth,
+      height: actualHeight,
+      cssWidth: layout.width,
+      cssHeight: layout.height,
+      scale: dims.scale,
+      format,
+      quality,
+    };
   } finally {
     layout.destroy();
   }
@@ -312,10 +691,56 @@ export async function exportOficinaTerceirosImages(
   entries: readonly OficinaTerceirosEntry[],
   options: OficinaTerceirosOptions = {},
   onProgress?: (progress: OficinaTerceirosProgress) => void,
-): Promise<{ width: number; height: number; count: number }> {
+): Promise<{ width: number; height: number; count: number; scale: number; format: OficinaReportFormat; quality: OficinaReportQuality }> {
   onProgress?.({ phase: 'Preparando imagem', current: 0, total: 0 });
-  const { blob, width, height } = await renderOficinaTerceirosPng(entries, options, onProgress);
-  const base = `equipamentos-oficina-terceiros-${localStamp(options.generatedAt ?? new Date())}`;
-  download(blob, `${base}.png`);
-  return { width, height, count: entries.length };
+  const result = await renderOficinaTerceirosPng(entries, options, onProgress);
+  const formatSuffix = result.format === 'celular' ? '' : `-${result.format}`;
+  const base = `${oficinaReportFilenameBase(options.scope)}${formatSuffix}-${localStamp(options.generatedAt ?? new Date())}`;
+  download(result.blob, `${base}.png`);
+  return {
+    width: result.width,
+    height: result.height,
+    count: entries.length,
+    scale: result.scale,
+    format: result.format,
+    quality: result.quality,
+  };
+}
+
+/** Exporta planilha Excel (.xlsx) do relatório respeitando o filtro separado/junto e a seleção atual. */
+export async function exportOficinaTerceirosExcel(
+  entries: readonly OficinaTerceirosEntry[],
+  scopedRows: ApoioReportRow[],
+  options: OficinaTerceirosOptions & { query?: string; prestadores?: readonly string[] } = {},
+): Promise<{ count: number; orderCount: number }> {
+  if (!entries.length) throw new Error('Nenhum equipamento marcado para exportar em Excel.');
+  const scope: OficinaTerceirosScope = options.scope ?? 'externa';
+  const generatedAt = options.generatedAt ?? new Date();
+  const { equipmentRows, orderRows, metaRows } = buildOficinaTerceirosExcelData(entries, scopedRows, {
+    scope,
+    query: options.query,
+    prestadores: options.prestadores,
+    generatedAt,
+  });
+
+  const workbook = XLSX.utils.book_new();
+  const equipmentSheet = XLSX.utils.json_to_sheet(equipmentRows);
+  equipmentSheet['!cols'] = [{ wch: 14 }, { wch: 32 }, { wch: 40 }, { wch: 28 }, { wch: 26 }, { wch: 13 }];
+  if (equipmentSheet['!ref']) equipmentSheet['!autofilter'] = { ref: equipmentSheet['!ref'] };
+  XLSX.utils.book_append_sheet(workbook, equipmentSheet, 'Equipamentos');
+
+  if (orderRows.length) {
+    const ordersSheet = XLSX.utils.json_to_sheet(orderRows);
+    ordersSheet['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 28 }, { wch: 24 }, { wch: 16 }, { wch: 34 }, { wch: 20 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 52 }];
+    if (ordersSheet['!ref']) ordersSheet['!autofilter'] = { ref: ordersSheet['!ref'] };
+    XLSX.utils.book_append_sheet(workbook, ordersSheet, 'Ordens vinculadas');
+  }
+
+  const metaSheet = XLSX.utils.aoa_to_sheet([['Campo', 'Valor'], ...metaRows]);
+  metaSheet['!cols'] = [{ wch: 30 }, { wch: 90 }];
+  XLSX.utils.book_append_sheet(workbook, metaSheet, 'Filtros e modo');
+
+  const filename = `${oficinaReportFilenameBase(scope)}-${localStamp(generatedAt)}.xlsx`;
+  await downloadIllustratedExcel(workbook, scopedRows, filename);
+  return { count: entries.length, orderCount: scopedRows.length };
 }

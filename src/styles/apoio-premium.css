@@ -37,7 +37,7 @@
   background: var(--apoio-ivory) !important;
   color: var(--apoio-text) !important;
   color-scheme: light !important;
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
   line-height: 1.45;
 }
 
@@ -270,7 +270,7 @@ html.glassy .apoio-premium.apoio-module {
   min-height: 40px;
   border: 1px solid var(--apoio-gold) !important;
   border-radius: 10px !important;
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
   font-weight: 700;
   line-height: 1.2;
   transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
@@ -302,7 +302,7 @@ html.glassy .apoio-premium.apoio-module {
 }
 
 .apoio-premium button:not(.apoio-button):not(.apoio-details-button) {
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
   color: var(--apoio-green) !important;
 }
 
@@ -315,7 +315,7 @@ html.glassy .apoio-premium.apoio-module {
   border-radius: 9px !important;
   background: #fff !important;
   color: var(--apoio-text) !important;
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
   box-shadow: inset 0 1px 2px rgba(11, 50, 31, .04);
 }
 
@@ -995,7 +995,7 @@ html.glassy .apoio-premium.apoio-module {
   background: linear-gradient(135deg, #f0df93 0%, #b38e43 100%) !important;
   color: var(--apoio-green) !important;
   box-shadow: 0 3px 8px rgba(96, 69, 20, .15);
-  font-family: "Segoe UI", Arial, sans-serif !important;
+  font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, -apple-system, sans-serif !important;
   font-weight: 800;
 }
 

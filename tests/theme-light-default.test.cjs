@@ -295,7 +295,7 @@ defaultEnvironment();
   );
   assert.deepEqual(
     themeApi.THEMES.map((theme) => theme.key),
-    ['verdan', 'light', 'dark', 'ocean', 'sunset', 'forest', 'midnight', 'rose', 'arctic', 'copper', 'lavender', 'glass', 'glassy-v18'],
+    ['verdan', 'black-cyan', 'ios-liquid-glass', 'light', 'dark', 'ocean', 'sunset', 'forest', 'midnight', 'rose', 'arctic', 'copper', 'lavender', 'glass', 'glassy-v18'],
     'a lista de temas existente deve ser preservada com verdan no topo',
   );
 }

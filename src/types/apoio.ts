@@ -25,6 +25,8 @@ export interface ApoioReportOptions {
   filtersExcel?: string[];
   /** Preserve the caller ordering by grouping only adjacent rows in PDF/images. */
   preserveRowOrder?: boolean;
+  /** Título opcional exibido no cabeçalho de exportações com recorte específico. */
+  reportTitle?: string;
 }
 
 export function oficinaLabel(origem: string): string {

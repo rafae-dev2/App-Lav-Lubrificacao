@@ -140,7 +140,10 @@ export default function AcompanhamentoManutencao({
   const { theme } = useTheme();
   const isVerdan = theme === "verdan";
   const { data, loading, refreshing, error, refresh, clock } =
-    useMaintenanceTracking();
+    useMaintenanceTracking({
+      automaticRefreshMs: 3 * 60_000,
+      syncOnAutomaticRefresh: false,
+    });
   const [filters, setFilters] = useState({ ...emptyFilters });
   const [lateOnly, setLateOnly] = useState(false);
   const [sort, setSort] = useState("priority");
